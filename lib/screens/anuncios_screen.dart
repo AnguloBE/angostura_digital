@@ -21,7 +21,7 @@ class AnunciosScreen extends StatelessWidget {
           children: [
             Text('Aqui apareceran anuncios OMG, apoco con un git push se actualiza esta baina?'),
             Text('Por ejemplo promociones, a ver prueba 2, ojala que funcione'),
-            Text('O nuevos negocios'),
+            Text('O nuevos negocios, que coraje que no se actualiza de volada'),
             Text('Cualquier cosa que sea reelevante'),
           ],
         ),
