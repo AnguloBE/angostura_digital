@@ -23,6 +23,7 @@ class AnunciosScreen extends StatelessWidget {
             Text('Por ejemplo promociones, a ver prueba 2, ojala que funcione'),
             Text('O nuevos negocios, que coraje que no se actualiza de volada'),
             Text('Cualquier cosa que sea reelevante, ya estoy arto :c la ultima y nos vamos'),
+            Text('Ya funciona, osi osi, que feliz que estoy :D'),
           ],
         ),
       ),
