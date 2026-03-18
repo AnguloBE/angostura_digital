@@ -35,3 +35,5 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_ANGOSTURA_DIGITAL }}
           channelId: live
           projectId: angostura-digital
+        env:
+          FIREBASE_CLI_EXPERIMENTS: webframeworks # <--- AGREGA ESTA LÍNEA
