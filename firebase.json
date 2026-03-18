@@ -1,1 +1,36 @@
-{"flutter":{"platforms":{"android":{"default":{"projectId":"angostura-digital","appId":"1:984485862980:android:ebd6750923d1b5b06ee611","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"angostura-digital","configurations":{"android":"1:984485862980:android:ebd6750923d1b5b06ee611","ios":"1:984485862980:ios:e1cc03cf385021bc6ee611","macos":"1:984485862980:ios:e1cc03cf385021bc6ee611","web":"1:984485862980:web:8a2a3eabb2e931ec6ee611","windows":"1:984485862980:web:683bbeed4c53dae56ee611"}}}}}}
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "angostura-digital",
+          "appId": "1:984485862980:android:ebd6750923d1b5b06ee611",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "angostura-digital",
+          "configurations": {
+            "android": "1:984485862980:android:ebd6750923d1b5b06ee611",
+            "ios": "1:984485862980:ios:e1cc03cf385021bc6ee611",
+            "macos": "1:984485862980:ios:e1cc03cf385021bc6ee611",
+            "web": "1:984485862980:web:8a2a3eabb2e931ec6ee611",
+            "windows": "1:984485862980:web:683bbeed4c53dae56ee611"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "source": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "frameworksBackend": {
+      "region": "us-west1"
+    }
+  }
+}
