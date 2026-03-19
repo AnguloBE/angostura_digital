@@ -9,7 +9,7 @@ class AnunciosScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Anuncios'),
+        title: const Text('Ofertas'),
         centerTitle: true,
         backgroundColor: globals.colorFondo,
       ),
@@ -17,7 +17,7 @@ class AnunciosScreen extends StatelessWidget {
 
       body: Padding(padding: EdgeInsets.all(8),
         child: Column(
-
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Text('Aqui apareceran anuncios OMG, apoco con un git push se actualiza esta baina?'),
             Text('Por ejemplo promociones, a ver prueba 2, ojala que funcione'),

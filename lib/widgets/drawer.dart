@@ -32,10 +32,14 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
           ),
           ListTile(
             leading: const Icon(Icons.campaign),
-            title: const Text('Anuncios'),
+            title: const Text('Ofertas'),
             onTap: () {
               Navigator.pop(context); // Cierra el drawer
             },
+          ),
+          ListTile(
+            leading: const Icon(Icons.fastfood),
+            title: const Text('Restaurantes'),
           ),
           ListTile(
             leading: const Icon(Icons.logout),

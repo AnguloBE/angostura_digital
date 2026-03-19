@@ -7,7 +7,7 @@ class AuthService {
     clientId: '984485862980-ng6j5pepgafcdeu4spkuk5pcj25ioln7.apps.googleusercontent.com',
   );
 
-  // Usamos 'static' para que la confirmación no se borre al cambiar de paso
+  // Guardamos el resultado de la confirmación
   static ConfirmationResult? _confirmationResult;
 
   // --- GOOGLE ---
@@ -30,7 +30,10 @@ class AuthService {
   // --- TELÉFONO (SMS) ---
   Future<bool> sendCode(String phoneNumber, RecaptchaVerifier verifier) async {
     try {
-      _confirmationResult = await _auth.signInWithPhoneNumber(phoneNumber, verifier);
+      _confirmationResult = await _auth.signInWithPhoneNumber(
+        phoneNumber, 
+        verifier
+      );
       return true;
     } catch (e) {
       print("Error enviando SMS: $e");
