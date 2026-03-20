@@ -1,13 +1,14 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:cloud_firestore/cloud_firestore.dart'; // Agregamos Firestore
 
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance; // Instancia de la BD
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     clientId: '984485862980-ng6j5pepgafcdeu4spkuk5pcj25ioln7.apps.googleusercontent.com',
   );
 
-  // Usamos 'static' para que la confirmación no se borre al cambiar de paso
   static ConfirmationResult? _confirmationResult;
 
   // --- GOOGLE ---
@@ -20,7 +21,11 @@ class AuthService {
         accessToken: googleAuth.accessToken,
         idToken: googleAuth.idToken,
       );
-      return await _auth.signInWithCredential(credential);
+      
+      UserCredential userCredential = await _auth.signInWithCredential(credential);
+      await _guardarUsuarioEnBD(userCredential.user); // Guardamos al entrar con Google
+      return userCredential;
+      
     } catch (e) {
       print("Error Google: $e");
       return null;
@@ -41,7 +46,12 @@ class AuthService {
   Future<UserCredential?> verifyCode(String smsCode) async {
     try {
       if (_confirmationResult != null) {
-        return await _confirmationResult!.confirm(smsCode);
+        UserCredential userCredential = await _confirmationResult!.confirm(smsCode);
+        
+        // ¡Aquí está la magia! Una vez que el SMS es correcto, lo guardamos.
+        await _guardarUsuarioEnBD(userCredential.user);
+        
+        return userCredential;
       }
       return null;
     } catch (e) {
@@ -50,8 +60,33 @@ class AuthService {
     }
   }
 
+  // --- GUARDAR EN FIRESTORE ---
+  Future<void> _guardarUsuarioEnBD(User? user) async {
+    if (user == null) return;
+
+    // Usamos el UID único que Firebase le da al usuario como ID del documento
+    final docRef = _firestore.collection('usuarios').doc(user.uid);
+    final docSnap = await docRef.get();
+
+    // Si el documento NO existe, significa que es un usuario nuevo
+    if (!docSnap.exists) {
+      await docRef.set({
+        'uid': user.uid,
+        'telefono': user.phoneNumber ?? '',
+        'email': user.email ?? '', // Por si entran con Google
+        'nombre': user.displayName ?? 'Usuario', 
+        'fecha_registro': FieldValue.serverTimestamp(), // Hora exacta del servidor
+        'rol': 'cliente', // Por defecto todos son clientes
+      });
+      print("Nuevo usuario guardado en Firestore: ${user.uid}");
+    } else {
+      print("El usuario ya estaba registrado en la base de datos.");
+    }
+  }
+
+  // --- CERRAR SESIÓN ---
   Future<void> signOut() async {
-    await _googleSignIn.signOut();
     await _auth.signOut();
+    await _googleSignIn.signOut();
   }
 }
