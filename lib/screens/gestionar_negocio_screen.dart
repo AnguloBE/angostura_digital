@@ -3,8 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:image_cropper/image_cropper.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/screens/agregar_producto_screen.dart';
+import 'package:angostura_digital/screens/pedidos_negocio_screen.dart';
+import 'package:angostura_digital/screens/configurar_envios_screen.dart'; 
 
 class GestionarNegocioScreen extends StatefulWidget {
   final String negocioId;
@@ -28,95 +31,122 @@ class GestionarNegocioScreen extends StatefulWidget {
 
 class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
   late TextEditingController _nombreCtrl;
+  late TextEditingController _ubicacionCtrl; 
+  GeoPoint? _ubicacionGeo; 
   bool _isLoading = false;
-  Uint8List? _nuevaImagenBytes;
   final ImagePicker _picker = ImagePicker();
+  bool _datosCargados = false; 
 
   @override
   void initState() {
     super.initState();
     _nombreCtrl = TextEditingController(text: widget.nombreActual);
+    _ubicacionCtrl = TextEditingController();
   }
 
-  // --- SUBIR FOTO DEL NEGOCIO ---
-  Future<void> _cambiarFoto() async {
-    if (widget.estadoActual == 'rechazado') return; // Bloqueado si está rechazado
-
-    final XFile? seleccion = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 70, maxWidth: 800);
+  Future<void> _cambiarImagen() async {
+    if (widget.estadoActual == 'rechazado') return;
+    final XFile? seleccion = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
     if (seleccion != null) {
-      final bytes = await seleccion.readAsBytes();
-      setState(() {
-        _nuevaImagenBytes = bytes;
-        _isLoading = true;
-      });
-
-      try {
-        final String fileName = 'negocios/${widget.negocioId}.jpg';
-        final Reference ref = FirebaseStorage.instance.ref().child(fileName);
-        final UploadTask uploadTask = ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
-        final TaskSnapshot snapshot = await uploadTask;
-        final String fotoUrl = await snapshot.ref.getDownloadURL();
-
-        await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update({'foto_url': fotoUrl});
-        
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Foto actualizada')));
-      } catch (e) {
-        print("Error subiendo foto: $e");
-      } finally {
-        setState(() => _isLoading = false);
+      CroppedFile? imagenRecortada = await ImageCropper().cropImage(
+        sourcePath: seleccion.path, aspectRatio: const CropAspectRatio(ratioX: 1, ratioY: 1), compressFormat: ImageCompressFormat.jpg, compressQuality: 50, maxWidth: 600, maxHeight: 600,
+        uiSettings: [AndroidUiSettings(toolbarTitle: 'Recortar Logo', toolbarColor: Colors.blueAccent, toolbarWidgetColor: Colors.white, initAspectRatio: CropAspectRatioPreset.square, lockAspectRatio: true), IOSUiSettings(title: 'Recortar Logo', aspectRatioLockEnabled: true)],
+      );
+      if (imagenRecortada != null) {
+        setState(() => _isLoading = true);
+        try {
+          final bytes = await imagenRecortada.readAsBytes();
+          final String urlSubida = await (await FirebaseStorage.instance.ref().child('negocios/${widget.negocioId}.jpg').putData(bytes, SettableMetadata(contentType: 'image/jpeg'))).ref.getDownloadURL();
+          await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update({'foto_url': urlSubida});
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Logo actualizado'), backgroundColor: Colors.green));
+        } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error al subir imagen.'), backgroundColor: Colors.red)); } 
+        finally { setState(() => _isLoading = false); }
       }
     }
   }
 
-  // --- GUARDAR NOMBRE ---
-  Future<void> _guardarNombre() async {
+  Future<void> _guardarDatos() async {
     if (_nombreCtrl.text.trim().isEmpty || widget.estadoActual == 'rechazado') return;
     setState(() => _isLoading = true);
-    await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update({
+    
+    Map<String, dynamic> datosAActualizar = {
       'nombre': _nombreCtrl.text.trim(),
-    });
+      'ubicacion': _ubicacionCtrl.text.trim(),
+    };
+    
+    if (_ubicacionGeo != null) {
+      datosAActualizar['ubicacion_geo'] = _ubicacionGeo;
+    }
+
+    await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update(datosAActualizar);
     setState(() => _isLoading = false);
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Nombre actualizado')));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Datos actualizados'), backgroundColor: Colors.green));
   }
 
-  // --- ELIMINAR NEGOCIO ---
   Future<void> _eliminarNegocio() async {
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Eliminar Negocio'),
-        content: const Text('¿Estás seguro? Se borrará el negocio y no aparecerá más en la app. Esta acción no se puede deshacer.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(context, true), 
-            child: const Text('Eliminar', style: TextStyle(color: Colors.white))
-          ),
-        ],
-      ),
-    );
-
+    final confirmar = await showDialog<bool>(context: context, builder: (context) => AlertDialog(title: const Text('Eliminar Negocio'), content: const Text('¿Estás seguro?'), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')), ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: () => Navigator.pop(context, true), child: const Text('Eliminar'))]));
     if (confirmar == true) {
-      // 1. Borramos el negocio
       await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).delete();
-      
-      // 2. Opcional: Borrar los productos de este negocio para no dejar basura
       final productos = await FirebaseFirestore.instance.collection('productos').where('negocio_id', isEqualTo: widget.negocioId).get();
-      for (var doc in productos.docs) {
-        await doc.reference.delete();
-      }
-
-      if (mounted) {
-        Navigator.pop(context); // Regresamos al drawer
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Negocio eliminado'), backgroundColor: Colors.red));
-      }
+      for (var doc in productos.docs) { await doc.reference.delete(); }
+      if (mounted) { Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Negocio eliminado'), backgroundColor: Colors.red)); }
     }
   }
 
-  // --- ELIMINAR UN PRODUCTO ---
-  Future<void> _eliminarProducto(String productoId) async {
-    await FirebaseFirestore.instance.collection('productos').doc(productoId).delete();
+  Future<void> _eliminarProducto(String productoId) async { await FirebaseFirestore.instance.collection('productos').doc(productoId).delete(); }
+  Widget _infoChip(String texto) { return Padding(padding: const EdgeInsets.only(bottom: 4.0), child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3), decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.grey.shade200)), child: Text(texto, style: const TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w500)))); }
+
+  Map<String, dynamic> _horarioPorDefecto() {
+    Map<String, dynamic> hor = {};
+    for (int i = 1; i <= 7; i++) { hor[i.toString()] = {'activo': true, 'abre': '08:00', 'cierra': '22:00'}; }
+    return hor;
+  }
+
+  Future<void> _abrirConfiguracionHorario(Map<String, dynamic>? horarioActual) async {
+    Map<String, dynamic> horarioMutable = horarioActual != null ? Map<String, dynamic>.from(horarioActual) : _horarioPorDefecto();
+    final dias = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+    await showModalBottomSheet(
+      context: context, isScrollControlled: true, backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Container(
+              padding: const EdgeInsets.all(16), height: MediaQuery.of(context).size.height * 0.8,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Configurar Horario', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)), const SizedBox(height: 8), Text('Los clientes no podrán pedir si estás fuera de este horario.', style: TextStyle(color: Colors.grey.shade600)), const Divider(height: 30),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: 7,
+                      itemBuilder: (context, index) {
+                        String diaId = (index + 1).toString(); var configDia = horarioMutable[diaId]; bool isActivo = configDia['activo'] ?? false;
+                        return Card(
+                          elevation: 1, margin: const EdgeInsets.only(bottom: 12), color: isActivo ? Colors.white : Colors.grey.shade100,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              children: [
+                                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(dias[index], style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: isActivo ? Colors.black : Colors.grey)), Switch(value: isActivo, activeColor: Colors.green, onChanged: (val) { setModalState(() { horarioMutable[diaId]['activo'] = val; }); })]),
+                                if (isActivo) Row(children: [Expanded(child: TextButton.icon(icon: const Icon(Icons.wb_sunny_outlined, size: 18), label: Text('Abre: ${configDia['abre']}'), onPressed: () async { final t = await showTimePicker(context: context, initialTime: TimeOfDay(hour: int.parse(configDia['abre'].split(':')[0]), minute: int.parse(configDia['abre'].split(':')[1]))); if (t != null) setModalState(() { horarioMutable[diaId]['abre'] = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}'; }); }, )), Expanded(child: TextButton.icon(icon: const Icon(Icons.nightlight_round, size: 18), label: Text('Cierra: ${configDia['cierra']}'), onPressed: () async { final t = await showTimePicker(context: context, initialTime: TimeOfDay(hour: int.parse(configDia['cierra'].split(':')[0]), minute: int.parse(configDia['cierra'].split(':')[1]))); if (t != null) setModalState(() { horarioMutable[diaId]['cierra'] = '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}'; }); }, ))])
+                                else const Padding(padding: EdgeInsets.symmetric(vertical: 8.0), child: Text('Día de Descanso', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  SizedBox(width: double.infinity, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.symmetric(vertical: 16)), child: const Text('Guardar Horario', style: TextStyle(fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold)), onPressed: () async { Navigator.pop(context); await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update({'horario': horarioMutable}); if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Horario guardado.'), backgroundColor: Colors.green)); }, ))
+                ],
+              ),
+            );
+          }
+        );
+      }
+    );
   }
 
   @override
@@ -126,154 +156,148 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     final bool isAprobado = widget.estadoActual == 'aprobado';
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Gestionar Negocio'),
-        backgroundColor: globals.colorFondo,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.delete_forever, color: Colors.redAccent),
-            onPressed: _eliminarNegocio,
-            tooltip: 'Eliminar negocio',
-          )
-        ],
-      ),
+      backgroundColor: Colors.white,
+      appBar: AppBar(title: const Text('Gestionar Negocio'), backgroundColor: globals.colorFondo, foregroundColor: Colors.white, actions: [IconButton(icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: _eliminarNegocio, tooltip: 'Eliminar negocio')]),
       body: Column(
         children: [
-          // --- ESTADO DEL NEGOCIO ---
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            color: isRechazado ? Colors.red.shade100 : (isPendiente ? Colors.orange.shade100 : Colors.green.shade100),
-            child: Text(
-              isRechazado ? '🚨 NEGOCIO RECHAZADO: No puedes hacer modificaciones.' :
-              (isPendiente ? '⏳ EN REVISIÓN: No puedes agregar productos hasta ser aprobado.' :
-              '✅ APROBADO: Tu negocio es visible en la app.'),
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: isRechazado ? Colors.red.shade800 : (isPendiente ? Colors.orange.shade800 : Colors.green.shade800),
-              ),
-            ),
-          ),
-
+          Container(width: double.infinity, padding: const EdgeInsets.all(12), color: isRechazado ? Colors.red.shade100 : (isPendiente ? Colors.orange.shade100 : Colors.green.shade100), child: Text(isRechazado ? '🚨 RECHAZADO: No puedes hacer modificaciones.' : (isPendiente ? '⏳ EN REVISIÓN: No puedes agregar productos aún.' : '✅ APROBADO: Tu negocio es visible.'), textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, color: isRechazado ? Colors.red.shade800 : (isPendiente ? Colors.orange.shade800 : Colors.green.shade800)))),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // --- SECCIÓN PERFIL DEL NEGOCIO ---
-                  Row(
-                    children: [
-                      GestureDetector(
-                        onTap: isRechazado ? null : _cambiarFoto,
-                        child: Stack(
-                          alignment: Alignment.bottomRight,
-                          children: [
-                            CircleAvatar(
-                              radius: 40,
-                              backgroundColor: Colors.grey.shade300,
-                              backgroundImage: _nuevaImagenBytes != null 
-                                  ? MemoryImage(_nuevaImagenBytes!) 
-                                  : (widget.fotoUrlActual != null ? NetworkImage(widget.fotoUrlActual!) : null) as ImageProvider?,
-                              child: (_nuevaImagenBytes == null && widget.fotoUrlActual == null) 
-                                  ? const Icon(Icons.store, size: 40, color: Colors.grey) : null,
-                            ),
-                            if (!isRechazado)
-                              const CircleAvatar(
-                                radius: 14,
-                                backgroundColor: Colors.blueAccent,
-                                child: Icon(Icons.camera_alt, size: 16, color: Colors.white),
-                              ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: TextField(
-                          controller: _nombreCtrl,
-                          enabled: !isRechazado,
-                          decoration: const InputDecoration(labelText: 'Nombre del Negocio'),
-                        ),
-                      ),
-                      if (!isRechazado)
-                        IconButton(
-                          icon: _isLoading ? const CircularProgressIndicator() : const Icon(Icons.save, color: Colors.green),
-                          onPressed: _guardarNombre,
-                        )
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  const Divider(),
+                  if (isAprobado) ...[
+                    Row(children: [Expanded(child: ElevatedButton.icon(icon: const Icon(Icons.receipt_long, size: 20), label: const Text('Pedidos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => PedidosNegocioScreen(negocioId: widget.negocioId, nombreNegocio: widget.nombreActual))); })), const SizedBox(width: 10), Expanded(child: ElevatedButton.icon(icon: const Icon(Icons.local_shipping, size: 20), label: const Text('Envíos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)), style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => ConfigurarEnviosScreen(negocioId: widget.negocioId))); }))]),
+                    const SizedBox(height: 15),
+                    
+                    StreamBuilder<DocumentSnapshot>(
+                      stream: FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).snapshots(),
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData || !snapshot.data!.exists) return const SizedBox.shrink();
+                        final data = snapshot.data!.data() as Map<String, dynamic>;
+                        return Card(elevation: 0, color: Colors.blue.shade50, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.blue.shade200)), child: ListTile(leading: const Icon(Icons.calendar_month, color: Colors.blueAccent, size: 30), title: const Text('Horario de Atención', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent)), subtitle: Text('Configura tus días de descanso y aperturas', style: TextStyle(fontSize: 12, color: Colors.blue.shade800)), trailing: const Icon(Icons.chevron_right, color: Colors.blueAccent), onTap: () => _abrirConfiguracionHorario(data['horario'] as Map<String, dynamic>?)));
+                      }
+                    ),
+                    const Divider(height: 30),
+                  ],
 
-                  // --- SECCIÓN PRODUCTOS ---
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Catálogo / Productos', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      if (isAprobado) // SOLO SE MUESTRA SI ESTÁ APROBADO
-                        ElevatedButton.icon(
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
-                          icon: const Icon(Icons.add, size: 18),
-                          label: const Text('Agregar'),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => AgregarProductoScreen(
-                                  negocioId: widget.negocioId,
-                                  categoriaNegocio: widget.categoria,
+                  StreamBuilder<DocumentSnapshot>(
+                    stream: FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).snapshots(),
+                    builder: (context, snapshot) {
+                      if (!snapshot.hasData || !snapshot.data!.exists) return const Center(child: CircularProgressIndicator());
+                      final data = snapshot.data!.data() as Map<String, dynamic>;
+                      final logoUrl = data['foto_url'];
+                      
+                      if (!_datosCargados) {
+                         _ubicacionCtrl.text = data['ubicacion'] ?? '';
+                         _ubicacionGeo = data['ubicacion_geo']; 
+                         _datosCargados = true;
+                      }
+
+                      return Column(
+                        children: [
+                          Row(
+                            children: [
+                              GestureDetector(onTap: isRechazado ? null : _cambiarImagen, child: Stack(alignment: Alignment.bottomRight, children: [CircleAvatar(radius: 40, backgroundColor: Colors.grey.shade300, backgroundImage: logoUrl != null ? NetworkImage(logoUrl) : null, child: logoUrl == null ? const Icon(Icons.store, size: 40, color: Colors.grey) : null), if (!isRechazado) const CircleAvatar(radius: 14, backgroundColor: Colors.blueAccent, child: Icon(Icons.camera_alt, size: 16, color: Colors.white))])),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  children: [
+                                    TextField(controller: _nombreCtrl, enabled: !isRechazado, decoration: const InputDecoration(labelText: 'Nombre del Negocio', border: OutlineInputBorder(), isDense: true)),
+                                    const SizedBox(height: 10),
+                                    
+                                    // --- CAMPO DE UBICACIÓN CON EL BOTÓN DEL MAPA INTEGRADO ---
+                                    TextField(
+                                      controller: _ubicacionCtrl, 
+                                      enabled: !isRechazado, 
+                                      decoration: InputDecoration(
+                                        labelText: 'Ubicación (Ej. Capomos, Centro...)', 
+                                        border: const OutlineInputBorder(), 
+                                        isDense: true, 
+                                        prefixIcon: const Icon(Icons.location_on, size: 18),
+                                        suffixIcon: IconButton(
+                                          icon: Icon(Icons.map, color: _ubicacionGeo != null ? Colors.green : Colors.blueAccent),
+                                          tooltip: 'Fijar en mapa',
+                                          onPressed: () async {
+                                            // TODO: BRAYAN, AQUÍ PONES EL NAVIGATOR A TU PANTALLA DE MAPA. 
+                                            // EJEMPLO: final res = await Navigator.push(context, MaterialPageRoute(builder: (_) => TuPantallaDeMapa()));
+                                            // if (res != null) { setState(() { _ubicacionGeo = GeoPoint(res.latitude, res.longitude); }); }
+                                            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Conecta aquí tu pantalla de mapa')));
+                                          },
+                                        )
+                                      )
+                                    ),
+                                  ],
                                 ),
                               ),
+                            ],
+                          ),
+                          const SizedBox(height: 15),
+                          if (!isRechazado)
+                             SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: _isLoading ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save), label: const Text('Guardar Datos'), style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white), onPressed: _guardarDatos))
+                        ],
+                      );
+                    }
+                  ),
+                  const SizedBox(height: 20), const Divider(),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Catálogo / Productos', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)), if (isAprobado) ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white), icon: const Icon(Icons.add, size: 18), label: const Text('Agregar'), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (context) => AgregarProductoScreen(negocioId: widget.negocioId, categoriaNegocio: widget.categoria))); })]),
+                  const SizedBox(height: 15),
+
+                  StreamBuilder<QuerySnapshot>(
+                    stream: FirebaseFirestore.instance.collection('productos').where('negocio_id', isEqualTo: widget.negocioId).snapshots(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                      final productos = snapshot.data?.docs ?? [];
+                      if (productos.isEmpty) return const Padding(padding: EdgeInsets.all(20.0), child: Center(child: Text('No hay productos registrados aún.', style: TextStyle(color: Colors.grey))));
+                      return Center(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            double maxW = constraints.maxWidth; if (maxW.isInfinite || maxW <= 0) maxW = MediaQuery.of(context).size.width - 32;
+                            int crossAxisCount = (maxW / 180).ceil(); if (crossAxisCount < 2) crossAxisCount = 2; 
+                            final double spacing = 12; final double totalSpacing = spacing * (crossAxisCount - 1); final double itemWidth = (maxW - totalSpacing) / crossAxisCount;
+
+                            return Wrap(
+                              spacing: spacing, runSpacing: spacing,
+                              children: productos.map((doc) {
+                                final prod = doc.data() as Map<String, dynamic>;
+                                List<Widget> extraWidgets = [];
+                                if (prod['ingredientes'] != null && prod['ingredientes'].toString().isNotEmpty) extraWidgets.add(_infoChip('Ingredientes: ${prod['ingredientes']}'));
+                                if (prod['peso_o_contenido'] != null && prod['peso_o_contenido'].toString().isNotEmpty) extraWidgets.add(_infoChip('Cont: ${prod['peso_o_contenido']}'));
+                                if (prod['codigo_barras'] != null && prod['codigo_barras'].toString().isNotEmpty) extraWidgets.add(_infoChip('Cód: ${prod['codigo_barras']}'));
+                                if (prod['tallas_disponibles'] != null && prod['tallas_disponibles'].toString().isNotEmpty) extraWidgets.add(_infoChip('Tallas: ${prod['tallas_disponibles']}'));
+                                if (prod['colores'] != null && prod['colores'].toString().isNotEmpty) extraWidgets.add(_infoChip('Colores: ${prod['colores']}'));
+
+                                return SizedBox(
+                                  width: itemWidth > 0 ? itemWidth : 150,
+                                  child: Card(
+                                    elevation: 3, shadowColor: Colors.black26, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), clipBehavior: Clip.antiAlias,
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, 
+                                      children: [
+                                        AspectRatio(aspectRatio: 1, child: SizedBox(width: double.infinity, child: prod['foto_url'] != null ? Image.network(prod['foto_url'], fit: BoxFit.cover) : Container(color: Colors.grey.shade200, child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 50)))),
+                                        Padding(
+                                          padding: const EdgeInsets.all(12.0),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(prod['nombre'] ?? 'Sin nombre', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, height: 1.15, color: Colors.black87)),
+                                              const SizedBox(height: 6), Text('\$${prod['precio']}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 17)),
+                                              if (prod['descripcion'] != null && prod['descripcion'].toString().isNotEmpty) ...[const SizedBox(height: 6), Text(prod['descripcion'], style: TextStyle(fontSize: 13, color: Colors.grey.shade800))],
+                                              if (extraWidgets.isNotEmpty) ...[const SizedBox(height: 8), Column(crossAxisAlignment: CrossAxisAlignment.start, children: extraWidgets)],
+                                              const SizedBox(height: 12),
+                                              if (!isRechazado) Align(alignment: Alignment.bottomRight, child: GestureDetector(onTap: () => _eliminarProducto(doc.id), child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.red.shade100, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.red.shade200)), child: const Icon(Icons.delete, color: Colors.red, size: 20))))
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
                             );
                           },
                         ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-
-                  // --- LISTA DE PRODUCTOS ---
-                  StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('productos')
-                        .where('negocio_id', isEqualTo: widget.negocioId)
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                      
-                      final productos = snapshot.data?.docs ?? [];
-                      
-                      if (productos.isEmpty) {
-                        return const Padding(
-                          padding: EdgeInsets.all(20.0),
-                          child: Center(child: Text('No hay productos registrados aún.', style: TextStyle(color: Colors.grey))),
-                        );
-                      }
-
-                      return ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: productos.length,
-                        itemBuilder: (context, index) {
-                          final doc = productos[index];
-                          final prod = doc.data() as Map<String, dynamic>;
-
-                          return Card(
-                            margin: const EdgeInsets.only(bottom: 10),
-                            child: ListTile(
-                              leading: prod['foto_url'] != null 
-                                ? Image.network(prod['foto_url'], width: 50, height: 50, fit: BoxFit.cover) 
-                                : const Icon(Icons.image_not_supported),
-                              title: Text(prod['nombre'] ?? 'Sin nombre'),
-                              subtitle: Text('\$${prod['precio']}'),
-                              trailing: isRechazado ? null : IconButton(
-                                icon: const Icon(Icons.delete, color: Colors.red),
-                                onPressed: () => _eliminarProducto(doc.id),
-                              ),
-                            ),
-                          );
-                        },
                       );
                     },
                   ),
