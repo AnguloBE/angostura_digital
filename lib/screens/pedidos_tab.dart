@@ -1,11 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart'; // IMPORTANTE PARA EL REEMBOLSO
+import 'package:cloud_functions/cloud_functions.dart'; 
 import 'package:angostura_digital/globals.dart' as globals;
+import 'package:url_launcher/url_launcher.dart'; // IMPORTANTE PARA EL MAPA
 
 class PedidosTab extends StatelessWidget {
   const PedidosTab({super.key});
+
+  // --- FUNCIÓN PARA ABRIR MAPAS ---
+  Future<void> _abrirMapaGoogle(GeoPoint geo, BuildContext context) async {
+    final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=${geo.latitude},${geo.longitude}');
+    try {
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
+        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo abrir Mapas')));
+      }
+    } catch (e) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error al abrir el mapa')));
+    }
+  }
 
   // --- FUNCIÓN ARREGLADA: AHORA RECIBE EL ID DE PAGO Y HABLA CON STRIPE ---
   Future<void> _cancelarPedidoCliente(BuildContext context, String pedidoId, String? paymentIntentId) async {
@@ -26,26 +39,23 @@ class PedidosTab extends StatelessWidget {
     );
 
     if (confirmar == true) {
-      // Mostramos la ruedita de carga mientras Stripe hace el reembolso
       showDialog(context: context, barrierDismissible: false, builder: (ctx) => const Center(child: CircularProgressIndicator()));
 
       try {
-        // 1. Mandamos la orden a Stripe si existe un ID de pago
         if (paymentIntentId != null && paymentIntentId.trim().isNotEmpty) {
           final HttpsCallable callable = FirebaseFunctions.instance.httpsCallable('reembolsarPago');
           await callable.call(<String, dynamic>{'paymentIntentId': paymentIntentId});
         }
 
-        // 2. Si Stripe nos da luz verde, actualizamos Firebase
         await FirebaseFirestore.instance.collection('pedidos').doc(pedidoId).update({'estado': 'Cancelado'});
         
         if (context.mounted) {
-          Navigator.pop(context); // Cerramos el loader
+          Navigator.pop(context); 
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pedido cancelado y dinero en proceso de reembolso.'), backgroundColor: Colors.orange));
         }
       } catch (e) {
         if (context.mounted) {
-          Navigator.pop(context); // Cerramos el loader si falla
+          Navigator.pop(context); 
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error al cancelar: $e'), backgroundColor: Colors.red));
         }
       }
@@ -84,8 +94,8 @@ class PedidosTab extends StatelessWidget {
                     final notas = data['notas'] ?? '';
                     final tiempoEstimado = data['tiempo_estimado'] ?? '';
                     final estadoActual = data['estado'] ?? 'Pendiente';
+                    final negocioId = data['negocio_id'] ?? '';
                     
-                    // ATRAPAMOS EL ID DEL PAGO PARA PODER ENVIARLO AL REEMBOLSO
                     final String? paymentIntentId = data['payment_intent_id']?.toString();
                     
                     final Timestamp? timestamp = data['fecha'] as Timestamp?;
@@ -143,21 +153,46 @@ class PedidosTab extends StatelessWidget {
                               ],
                             ),
 
+                            // === NUEVO BOTÓN PARA VER LA UBICACIÓN DEL NEGOCIO ===
+                            if (negocioId.isNotEmpty)
+                              FutureBuilder<DocumentSnapshot>(
+                                future: FirebaseFirestore.instance.collection('negocios').doc(negocioId).get(),
+                                builder: (context, snapshotNegocio) {
+                                  if (!snapshotNegocio.hasData || !snapshotNegocio.data!.exists) return const SizedBox.shrink();
+                                  
+                                  final dataNegocio = snapshotNegocio.data!.data() as Map<String, dynamic>;
+                                  final GeoPoint? geoNegocio = dataNegocio['ubicacion_geo'];
+                                  
+                                  if (geoNegocio == null) return const SizedBox.shrink();
+
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 15),
+                                    child: SizedBox(
+                                      width: double.infinity,
+                                      child: OutlinedButton.icon(
+                                        icon: const Icon(Icons.place, color: Colors.blueAccent),
+                                        label: const Text('Ver ubicación del negocio'),
+                                        style: OutlinedButton.styleFrom(foregroundColor: Colors.blueAccent, side: BorderSide(color: Colors.blueAccent.shade100)),
+                                        onPressed: () => _abrirMapaGoogle(geoNegocio, context),
+                                      ),
+                                    ),
+                                  );
+                                }
+                              ),
+
                             // === BOTÓN DE CANCELAR PARA EL CLIENTE ===
                             if (estadoActual == 'Pendiente') ...[
-                              const SizedBox(height: 15),
+                              const SizedBox(height: 10),
                               SizedBox(
                                 width: double.infinity,
                                 child: OutlinedButton.icon(
                                   icon: const Icon(Icons.cancel_outlined),
                                   label: const Text('Cancelar Pedido'),
                                   style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                                  // LE PASAMOS EL ID DEL PAGO
                                   onPressed: () => _cancelarPedidoCliente(context, doc.id, paymentIntentId),
                                 ),
                               )
                             ]
-                            // ==========================================
                           ],
                         ),
                       ),

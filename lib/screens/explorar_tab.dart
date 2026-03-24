@@ -25,6 +25,7 @@ class _ExplorarTabState extends State<ExplorarTab> {
 
   String? _verificarHorario(Map<String, dynamic>? horario) {
     if (horario == null) return null; 
+
     final now = DateTime.now();
     final dayStr = now.weekday.toString();
     final todayData = horario[dayStr];
@@ -33,22 +34,27 @@ class _ExplorarTabState extends State<ExplorarTab> {
     if (todayData != null && todayData['activo'] == true) {
       final minAbre = int.parse(todayData['abre'].split(':')[0]) * 60 + int.parse(todayData['abre'].split(':')[1]);
       final minCierra = int.parse(todayData['cierra'].split(':')[0]) * 60 + int.parse(todayData['cierra'].split(':')[1]);
+      
       bool isOpen = false;
       if (minCierra > minAbre) isOpen = minNow >= minAbre && minNow < minCierra;
       else isOpen = minNow >= minAbre || minNow < minCierra;
+
       if (isOpen) return null; 
     }
 
     for (int i = 0; i <= 7; i++) {
       int checkDay = now.weekday + i;
       if (checkDay > 7) checkDay -= 7;
+      
       final checkData = horario[checkDay.toString()];
       if (checkData != null && checkData['activo'] == true) {
         final minAbre = int.parse(checkData['abre'].split(':')[0]) * 60 + int.parse(checkData['abre'].split(':')[1]);
         String horaBonita = _formatearHora(checkData['abre']);
+
         if (i == 0) {
           if (minNow < minAbre) return 'Abre hoy $horaBonita'; 
-        } else if (i == 1) { return 'Abre mañana $horaBonita';
+        } else if (i == 1) {
+          return 'Abre mañana $horaBonita';
         } else {
           final dias = ['', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
           return 'Abre el ${dias[checkDay]} $horaBonita';
@@ -59,15 +65,20 @@ class _ExplorarTabState extends State<ExplorarTab> {
   }
 
   String _formatearHora(String hhmm) {
-    final partes = hhmm.split(':'); int h = int.parse(partes[0]); final m = partes[1]; final ampm = h >= 12 ? 'PM' : 'AM';
-    if (h > 12) h -= 12; if (h == 0) h = 12; return '$h:$m $ampm';
+    final partes = hhmm.split(':');
+    int h = int.parse(partes[0]);
+    final m = partes[1];
+    final ampm = h >= 12 ? 'PM' : 'AM';
+    if (h > 12) h -= 12;
+    if (h == 0) h = 12;
+    return '$h:$m $ampm';
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(title: Container(height: 40, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)), child: TextField(controller: _searchController, autofocus: false, decoration: InputDecoration(hintText: 'Buscar locales, ej. Capomos...', hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14), prefixIcon: const Icon(Icons.search, color: Colors.grey), suffixIcon: _searchQuery.isNotEmpty || _categoriaSeleccionada.isNotEmpty ? IconButton(icon: const Icon(Icons.clear, color: Colors.grey), onPressed: () { _searchController.clear(); setState(() { _searchQuery = ''; _categoriaSeleccionada = ''; }); }) : null, border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 10)), onChanged: (value) { setState(() { _searchQuery = value.toLowerCase().trim(); _categoriaSeleccionada = ''; }); })), backgroundColor: globals.colorFondo),
+      appBar: AppBar(title: Container(height: 40, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)), child: TextField(controller: _searchController, autofocus: false, decoration: InputDecoration(hintText: 'Buscar hamburguesas, farmacias, capomos...', hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14), prefixIcon: const Icon(Icons.search, color: Colors.grey), suffixIcon: _searchQuery.isNotEmpty || _categoriaSeleccionada.isNotEmpty ? IconButton(icon: const Icon(Icons.clear, color: Colors.grey), onPressed: () { _searchController.clear(); setState(() { _searchQuery = ''; _categoriaSeleccionada = ''; }); }) : null, border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 10)), onChanged: (value) { setState(() { _searchQuery = value.toLowerCase().trim(); _categoriaSeleccionada = ''; }); })), backgroundColor: globals.colorFondo),
       body: _searchQuery.isEmpty && _categoriaSeleccionada.isEmpty ? _buildEstadoInicial() : _buildResultadosBusqueda(),
     );
   }
@@ -101,16 +112,12 @@ class _ExplorarTabState extends State<ExplorarTab> {
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(strokeWidth: 2));
         final negocios = snapshot.data!.docs.where((doc) {
-          final data = doc.data() as Map<String, dynamic>;
-          if (_categoriaSeleccionada.isNotEmpty) return data['categoria'] == _categoriaSeleccionada;
+          if (_categoriaSeleccionada.isNotEmpty) return doc['categoria'] == _categoriaSeleccionada;
+          final nombre = (doc['nombre'] ?? '').toString().toLowerCase(); 
+          // --- AQUÍ AÑADIMOS LA BÚSQUEDA POR UBICACIÓN ---
+          final ubicacion = (doc.data() as Map<String, dynamic>).containsKey('ubicacion') ? (doc['ubicacion'] ?? '').toString().toLowerCase() : '';
           
-          final nombre = (data['nombre'] ?? '').toString().toLowerCase(); 
-          final ubicacion = data.containsKey('ubicacion') ? (data['ubicacion'] ?? '').toString().toLowerCase() : '';
-          
-          // Buscamos la zona de envío sin importar cómo se guarde
-          final zonaEnvio = (data['zona_envio'] ?? data['zona'] ?? data['zonas'] ?? '').toString().toLowerCase();
-          
-          return nombre.contains(_searchQuery) || ubicacion.contains(_searchQuery) || zonaEnvio.contains(_searchQuery);
+          return nombre.contains(_searchQuery) || ubicacion.contains(_searchQuery);
         }).toList();
         if (negocios.isEmpty) return Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Text('No hay locales.', style: TextStyle(color: Colors.grey.shade600)));
         return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 600), child: Column(children: negocios.map((doc) => _tarjetaNegocio(doc)).toList())));
@@ -122,10 +129,7 @@ class _ExplorarTabState extends State<ExplorarTab> {
     final data = doc.data() as Map<String, dynamic>;
     String? estadoCierre = _verificarHorario(data['horario'] as Map<String, dynamic>?);
     bool isAbierto = estadoCierre == null;
-    
-    String ubicacion = data['ubicacion'] ?? ''; 
-    // Atrapamos la zona de envío (ya sea zona_envio, zona o zonas)
-    String zonaEnvio = (data['zona_envio'] ?? data['zona'] ?? data['zonas'] ?? '').toString(); 
+    String ubicacion = data['ubicacion'] ?? ''; // Obtenemos la ubicación
 
     return GestureDetector(
       onTap: () { Navigator.push(context, MaterialPageRoute(builder: (context) => MenuNegocioScreen(negocioId: doc.id, nombreNegocio: data['nombre'] ?? 'Local', fotoUrl: data['foto_url']))); },
@@ -148,10 +152,16 @@ class _ExplorarTabState extends State<ExplorarTab> {
                       crossAxisAlignment: WrapCrossAlignment.center, spacing: 8, runSpacing: 4,
                       children: [
                         Text(data['categoria'] ?? '', style: TextStyle(color: Colors.grey.shade700, fontSize: 13)),
+                        // --- AQUÍ MOSTRAMOS EL PINCITO Y LA UBICACIÓN ---
                         if (ubicacion.isNotEmpty)
-                          Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.location_on, size: 14, color: Colors.red.shade400), const SizedBox(width: 2), Text(ubicacion, style: TextStyle(color: Colors.grey.shade800, fontSize: 12, fontWeight: FontWeight.w600))]),
-                        if (zonaEnvio.isNotEmpty)
-                          Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.delivery_dining, size: 14, color: Colors.blue.shade400), const SizedBox(width: 2), Text('Envía a: $zonaEnvio', style: TextStyle(color: Colors.blue.shade700, fontSize: 12, fontWeight: FontWeight.bold))]),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.location_on, size: 14, color: Colors.red.shade400),
+                              const SizedBox(width: 2),
+                              Text(ubicacion, style: TextStyle(color: Colors.grey.shade800, fontSize: 12, fontWeight: FontWeight.w600)),
+                            ],
+                          ),
                         if (!isAbierto) 
                           Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.red.shade200)), child: Text(estadoCierre!.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.red, fontWeight: FontWeight.bold))),
                       ],

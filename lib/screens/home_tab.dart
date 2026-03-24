@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:provider/provider.dart'; 
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/widgets/drawer.dart';
+
+import 'package:angostura_digital/screens/menu_negocio_screen.dart';
+import 'package:angostura_digital/providers/cart_provider.dart';
 
 class HomeTab extends StatelessWidget {
   const HomeTab({super.key});
@@ -8,135 +13,147 @@ class HomeTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      drawer: const DrawerPrincipal(), // Accesible desde el icono del AppBar
-      body: CustomScrollView(
-        slivers: [
-          // 1. App Bar Dinámico
-          SliverAppBar(
-            floating: true,
-            pinned: true,
-            backgroundColor: globals.colorFondo,
-            foregroundColor: Colors.white,
-            title: const Text('Angostura Digital', style: TextStyle(fontWeight: FontWeight.bold)),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.shopping_cart),
-                onPressed: () {
-                  // Ir al carrito
-                },
-              )
-            ],
-          ),
-
-          // 2. Banners de Promociones (Horizontal)
-          SliverToBoxAdapter(
-            child: SizedBox(
-              height: 160,
-              child: ListView.builder(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.all(16),
-                itemCount: 3,
-                itemBuilder: (context, index) {
-                  return Container(
-                    width: 280,
-                    margin: const EdgeInsets.only(right: 16),
-                    decoration: BoxDecoration(
-                      color: Colors.blueAccent.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    child: const Center(child: Text('Banner de Oferta')),
-                  );
-                },
-              ),
-            ),
-          ),
-
-          // 3. Categorías (Círculos)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Categorías', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 90,
-                    child: ListView(
-                      scrollDirection: Axis.horizontal,
-                      children: const [
-                        _CategoriaItem(icon: Icons.fastfood, label: 'Comida'),
-                        _CategoriaItem(icon: Icons.local_pharmacy, label: 'Farmacia'),
-                        _CategoriaItem(icon: Icons.shopping_bag, label: 'Abarrotes'),
-                        _CategoriaItem(icon: Icons.checkroom, label: 'Ropa'),
-                        _CategoriaItem(icon: Icons.more_horiz, label: 'Más'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-
-          // 4. Feed de Negocios Destacados
-          SliverPadding(
-            padding: const EdgeInsets.all(16),
-            sliver: SliverToBoxAdapter(
-              child: const Text('Negocios Destacados', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            ),
-          ),
-          
-          SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                // Aquí iría tu StreamBuilder consultando Firebase
-                return Card(
-                  margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.all(12),
-                    leading: Container(
-                      width: 60, height: 60,
-                      decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(8)),
-                      child: const Icon(Icons.store),
-                    ),
-                    title: Text('Negocio de Ejemplo $index', style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: const Text('Comida rápida • Envío \$20\nAbierto ahora', style: TextStyle(height: 1.5)),
-                    isThreeLine: true,
-                    onTap: () {
-                      // Ir a la vista del negocio
-                    },
-                  ),
-                );
-              },
-              childCount: 10,
-            ),
-          ),
-        ],
+      backgroundColor: Colors.grey.shade100,
+      drawer: const DrawerPrincipal(), 
+      appBar: AppBar(
+        title: const Text('Promociones en Angostura', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        backgroundColor: globals.colorFondo,
+        elevation: 0,
+        iconTheme: const IconThemeData(color: Colors.white), 
       ),
-    );
-  }
-}
+      body: StreamBuilder<QuerySnapshot>(
+        stream: FirebaseFirestore.instance.collection('promociones').orderBy('fecha_creacion', descending: true).snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
 
-class _CategoriaItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
+          final promos = snapshot.data?.docs.where((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            if (data['fecha_final'] == null) return true; 
+            DateTime fechaLimite = (data['fecha_final'] as Timestamp).toDate();
+            return fechaLimite.add(const Duration(days: 1)).isAfter(DateTime.now());
+          }).toList() ?? [];
 
-  const _CategoriaItem({required this.icon, required this.label});
+          if (promos.isEmpty) {
+            return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.local_offer, size: 80, color: Colors.grey.shade300), const SizedBox(height: 15), const Text('Aún no hay promociones activas.', style: TextStyle(fontSize: 18, color: Colors.grey))]));
+          }
 
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 16),
-      child: Column(
-        children: [
-          CircleAvatar(
-            radius: 30,
-            backgroundColor: Colors.blue.shade50,
-            child: Icon(icon, color: Colors.blueAccent, size: 28),
-          ),
-          const SizedBox(height: 6),
-          Text(label, style: const TextStyle(fontSize: 12)),
-        ],
+          double screenWidth = MediaQuery.of(context).size.width;
+          double cardWidth = screenWidth < 400 ? screenWidth - 32 : 360;
+
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: SizedBox(
+              width: double.infinity, 
+              child: Wrap(
+                alignment: WrapAlignment.center, spacing: 20, runSpacing: 20,
+                children: promos.map((doc) {
+                  final promo = doc.data() as Map<String, dynamic>;
+                  
+                  String textoFecha = 'Hasta agotar existencias';
+                  if (promo['fecha_final'] != null) {
+                    DateTime dt = (promo['fecha_final'] as Timestamp).toDate();
+                    textoFecha = 'Válido hasta: ${dt.day}/${dt.month}/${dt.year}';
+                  }
+
+                  return SizedBox(
+                    width: cardWidth, 
+                    child: Card(
+                      elevation: 4, shadowColor: Colors.black26, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)), clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        // ==========================================
+                        // SOLUCIÓN AL ERROR DEL MAP<STRING, DYNAMIC>
+                        // ==========================================
+                        onTap: () { 
+                          // 1. Desglosamos los valores uno por uno para que el Provider los acepte
+                          String idNegocio = promo['negocio_id'] ?? '';
+                          String idPromo = doc.id;
+                          String nombrePromo = '🔥 ${promo['titulo'] ?? 'Oferta'}';
+                          double precioPromo = (promo['precio_promo'] ?? 0).toDouble();
+                          String? fotoPromo = promo['foto_url'];
+                          String nombreDelLocal = promo['nombre_negocio'] ?? 'Negocio';
+
+                          final cart = Provider.of<CartProvider>(context, listen: false);
+                          
+                          // 2. Usamos tu función agregarProducto tal como está en el Provider
+                          bool agregadoConExito = cart.agregarProducto(idNegocio, idPromo, nombrePromo, precioPromo, fotoPromo);
+
+                          if (agregadoConExito) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('¡Oferta agregada al carrito! 🛒🤤'), backgroundColor: Colors.green, behavior: SnackBarBehavior.floating, duration: Duration(seconds: 2))
+                            );
+                            Navigator.push(context, MaterialPageRoute(builder: (_) => MenuNegocioScreen(negocioId: idNegocio, nombreNegocio: nombreDelLocal)));
+                          } else {
+                            // 3. Si el carrito tenía cosas de otro local, mostramos la alerta
+                            showDialog(
+                              context: context, 
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('⚠️ Carrito Ocupado', style: TextStyle(fontWeight: FontWeight.bold)), 
+                                content: const Text('Tu carrito tiene productos de otro restaurante. Por políticas de entrega, solo puedes pedir de un local a la vez.\n\n¿Deseas vaciar tu carrito actual y aprovechar esta oferta?'), 
+                                actions: [
+                                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar', style: TextStyle(color: Colors.grey))), 
+                                  ElevatedButton(
+                                    style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white), 
+                                    onPressed: () { 
+                                      cart.limpiarCarrito(); 
+                                      cart.agregarProducto(idNegocio, idPromo, nombrePromo, precioPromo, fotoPromo); 
+                                      Navigator.pop(ctx); 
+                                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Carrito vaciado. Oferta agregada.'), backgroundColor: Colors.green)); 
+                                      Navigator.push(context, MaterialPageRoute(builder: (_) => MenuNegocioScreen(negocioId: idNegocio, nombreNegocio: nombreDelLocal)));
+                                    }, 
+                                    child: const Text('Sí, vaciar y agregar')
+                                  )
+                                ]
+                              )
+                            );
+                          }
+                        },
+                        // ==========================================
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Stack(
+                              children: [
+                                SizedBox(height: 200, width: double.infinity, child: promo['foto_url'] != null ? Image.network(promo['foto_url'], fit: BoxFit.cover) : Container(color: Colors.grey.shade300, child: const Icon(Icons.image, size: 50, color: Colors.grey))),
+                                Positioned(top: 15, right: 15, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(20), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)]), child: const Text('¡OFERTA!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1)))),
+                              ],
+                            ),
+                            
+                            Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(promo['titulo'] ?? 'Sin título', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black87), maxLines: 2, overflow: TextOverflow.ellipsis),
+                                  const SizedBox(height: 4),
+                                  Text('Por: ${promo['nombre_negocio'] ?? 'Negocio local'}', style: TextStyle(fontSize: 14, color: Colors.blueAccent.shade700, fontWeight: FontWeight.w600)),
+                                  const SizedBox(height: 8),
+                                  if (promo['descripcion'] != null && promo['descripcion'].toString().isNotEmpty)
+                                    Text(promo['descripcion'], style: TextStyle(fontSize: 14, color: Colors.grey.shade700), maxLines: 3, overflow: TextOverflow.ellipsis),
+                                  const Divider(height: 20),
+                                  
+                                  Row(children: [const Icon(Icons.timer_outlined, size: 16, color: Colors.redAccent), const SizedBox(width: 4), Text(textoFecha, style: const TextStyle(fontSize: 13, color: Colors.redAccent, fontWeight: FontWeight.bold))]),
+                                  const SizedBox(height: 10),
+
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Precio normal', style: TextStyle(fontSize: 12, color: Colors.grey)), Text('\$${promo['precio_normal']}', style: const TextStyle(fontSize: 16, color: Colors.grey, decoration: TextDecoration.lineThrough, fontWeight: FontWeight.bold))]),
+                                      Row(children: [const Text('A solo: ', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black54)), Text('\$${promo['precio_promo']}', style: const TextStyle(fontSize: 26, color: Colors.green, fontWeight: FontWeight.bold))])
+                                    ],
+                                  )
+                                ],
+                              ),
+                            )
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          );
+        },
       ),
     );
   }

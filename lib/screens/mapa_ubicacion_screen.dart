@@ -5,7 +5,13 @@ import 'package:http/http.dart' as http;
 import 'package:angostura_digital/globals.dart' as globals;
 
 class MapaUbicacionScreen extends StatefulWidget {
-  const MapaUbicacionScreen({super.key});
+  // === NUEVO: Interruptor para saber qué devolver ===
+  final bool soloCoordenadas; 
+
+  const MapaUbicacionScreen({
+    super.key, 
+    this.soloCoordenadas = false, // Por defecto es false para no afectar tu carrito
+  });
 
   @override
   State<MapaUbicacionScreen> createState() => _MapaUbicacionScreenState();
@@ -14,7 +20,6 @@ class MapaUbicacionScreen extends StatefulWidget {
 class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
   GoogleMapController? _mapController;
   
-  // Coordenadas iniciales (Centro de Angostura aprox)
   static const LatLng _centroAngostura = LatLng(25.3636, -108.1611);
   
   LatLng? _posicionSeleccionada;
@@ -22,11 +27,8 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
   bool _buscandoDireccion = false;
   
   final TextEditingController _referenciasCtrl = TextEditingController();
-
-  // Tu llave de Google Maps (Usada aquí para traducir coordenadas a texto)
   final String _googleApiKey = "AIzaSyB96gNYG1I92oeAA8H-_WvTAJNFMLKVtkA";
 
-  // Función mágica que le pregunta a Google cómo se llama la calle tocada
   Future<void> _traducirCoordenadas(LatLng posicion) async {
     setState(() {
       _posicionSeleccionada = posicion;
@@ -56,18 +58,23 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
 
   void _confirmarUbicacion() {
     if (_posicionSeleccionada == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Por favor, toca el mapa para poner el pin en tu casa.'), backgroundColor: Colors.orange));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Por favor, toca el mapa para poner el pin.'), backgroundColor: Colors.orange));
       return;
     }
+
+    // === NUEVO: Si es para el negocio, devolvemos puro GPS y nos saltamos las referencias ===
+    if (widget.soloCoordenadas) {
+      Navigator.pop(context, _posicionSeleccionada);
+      return;
+    }
+
+    // Lógica normal para el carrito
     if (_referenciasCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Las referencias son obligatorias para que el repartidor no se pierda.'), backgroundColor: Colors.orange));
       return;
     }
 
-    // Armamos el super texto que verá el restaurante
     final direccionFinal = "$_direccionTraducida\n📍 Referencias: ${_referenciasCtrl.text.trim()}\n[Coords: ${_posicionSeleccionada!.latitude}, ${_posicionSeleccionada!.longitude}]";
-    
-    // Regresamos al carrito con esta dirección
     Navigator.pop(context, direccionFinal);
   }
 
@@ -75,13 +82,12 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('📍 Ubica tu entrega', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        title: Text(widget.soloCoordenadas ? '📍 Fijar Negocio' : '📍 Ubica tu entrega', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
         backgroundColor: globals.colorFondo,
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Column(
         children: [
-          // MAPA INTERACTIVO (Toma la mitad de la pantalla)
           Expanded(
             child: GoogleMap(
               initialCameraPosition: const CameraPosition(target: _centroAngostura, zoom: 15),
@@ -92,15 +98,9 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
                 : {},
             ),
           ),
-
-          // PANEL INFERIOR DE CONFIRMACIÓN
           Container(
             padding: const EdgeInsets.all(20),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -5))],
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-            ),
+            decoration: const BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -5))], borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -111,35 +111,24 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
                 else 
                   Text(_direccionTraducida, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
                 
-                const Divider(height: 30),
-                
-                TextField(
-                  controller: _referenciasCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'Referencias de la casa',
-                    hintText: 'Ej. Casa verde, frente al parque, rejas negras.',
-                    prefixIcon: const Icon(Icons.home),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                    filled: true,
-                    fillColor: Colors.grey.shade50,
+                // === NUEVO: Ocultamos las referencias si estamos configurando el negocio ===
+                if (!widget.soloCoordenadas) ...[
+                  const Divider(height: 30),
+                  TextField(
+                    controller: _referenciasCtrl,
+                    decoration: InputDecoration(labelText: 'Referencias de la casa', hintText: 'Ej. Casa verde, frente al parque, rejas negras.', prefixIcon: const Icon(Icons.home), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)), filled: true, fillColor: Colors.grey.shade50),
+                    maxLines: 2,
+                    textCapitalization: TextCapitalization.sentences,
                   ),
-                  maxLines: 2,
-                  textCapitalization: TextCapitalization.sentences,
-                ),
+                ],
                 
                 const SizedBox(height: 20),
-                
                 SizedBox(
-                  width: double.infinity,
-                  height: 50,
+                  width: double.infinity, height: 50,
                   child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blueAccent, 
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))
-                    ),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                     onPressed: _confirmarUbicacion,
-                    child: const Text('Confirmar Dirección', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    child: Text(widget.soloCoordenadas ? 'Fijar Coordenadas' : 'Confirmar Dirección', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   ),
                 )
               ],

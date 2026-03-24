@@ -63,12 +63,11 @@ class MenuNegocioScreen extends StatelessWidget {
     return '$h:$m $ampm';
   }
 
-  // --- GOOGLE MAPS LAUNCHER (Más robusto) ---
-  Future<void> _abrirMapa(GeoPoint geo, BuildContext context) async {
+  Future<void> _abrirMapaGoogle(GeoPoint geo, BuildContext context) async {
     final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=${geo.latitude},${geo.longitude}');
     try {
       if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
-        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo abrir Google Maps')));
+        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo abrir la app de Mapas')));
       }
     } catch (e) {
       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Error al abrir el mapa')));
@@ -100,8 +99,6 @@ class MenuNegocioScreen extends StatelessWidget {
           
           String ubicacion = dataNegocio['ubicacion'] ?? ''; 
           GeoPoint? ubicacionGeo = dataNegocio['ubicacion_geo'];
-          
-          // ATRAPAMOS LA ZONA CON CUALQUIER NOMBRE
           String zonaEnvio = (dataNegocio['zona_envio'] ?? dataNegocio['zona'] ?? dataNegocio['zonas'] ?? '').toString(); 
           
           String mensajeTiempo = ''; Color colorTiempo = Colors.grey;
@@ -125,24 +122,29 @@ class MenuNegocioScreen extends StatelessWidget {
                     children: [
                       if (ubicacion.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Row(children: [Icon(Icons.location_on, color: Colors.red.shade400, size: 18), const SizedBox(width: 8), Expanded(child: Text(ubicacion, style: TextStyle(color: Colors.grey.shade900, fontWeight: FontWeight.bold, fontSize: 14)))]),
+                          padding: const EdgeInsets.only(bottom: 4), 
+                          child: Row(
+                            children: [
+                              Icon(Icons.location_on, color: Colors.red.shade400, size: 18), 
+                              const SizedBox(width: 6), 
+                              Expanded(child: Text(ubicacion, style: TextStyle(color: Colors.grey.shade900, fontWeight: FontWeight.bold, fontSize: 14))),
+                              
+                              // --- BOTÓN DE MAPA AL LADO DEL NOMBRE DE UBICACIÓN ---
+                              if (ubicacionGeo != null)
+                                TextButton.icon(
+                                  icon: const Icon(Icons.map, size: 16, color: Colors.blueAccent),
+                                  label: const Text('Ver mapa', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent)),
+                                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                                  onPressed: () => _abrirMapaGoogle(ubicacionGeo, context),
+                                )
+                            ]
+                          )
                         ),
                       if (zonaEnvio.isNotEmpty)
                         Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Row(children: [Icon(Icons.delivery_dining, color: Colors.blue.shade400, size: 18), const SizedBox(width: 8), Expanded(child: Text('Zona de envío: $zonaEnvio', style: TextStyle(color: Colors.blue.shade800, fontSize: 14, fontWeight: FontWeight.bold)))]),
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Row(children: [Icon(Icons.delivery_dining, color: Colors.blue.shade400, size: 18), const SizedBox(width: 6), Expanded(child: Text('Zona de envío: $zonaEnvio', style: TextStyle(color: Colors.blue.shade800, fontSize: 13)))]),
                         ),
-                      if (ubicacionGeo != null)
-                        SizedBox(
-                          width: double.infinity,
-                          child: ElevatedButton.icon(
-                            icon: const Icon(Icons.directions, size: 20), 
-                            label: const Text('Cómo llegar (Google Maps)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 12), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-                            onPressed: () => _abrirMapa(ubicacionGeo, context),
-                          ),
-                        )
                     ],
                   ),
                 ),

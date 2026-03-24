@@ -149,7 +149,9 @@ class PedidosNegocioScreen extends StatelessWidget {
               final notas = data['notas'] ?? '';
               final clienteId = data['cliente_id'];
               
-              // MAGIA AQUÍ: Forzamos que sea un String siempre.
+              // Rescatamos si es para domicilio o para recoger
+              final metodoEntrega = data['metodo_entrega'] ?? 'domicilio'; 
+              
               final String? paymentIntentId = data['payment_intent_id']?.toString(); 
               
               final subtotal = (data['subtotal'] ?? 0).toDouble();
@@ -185,7 +187,8 @@ class PedidosNegocioScreen extends StatelessWidget {
                               ],
                             ),
                           ),
-                          _buildEstadoDropdown(context, doc.id, estadoActual, paymentIntentId),
+                          // Le pasamos el metodoEntrega a nuestra función de estados
+                          _buildEstadoDropdown(context, doc.id, estadoActual, paymentIntentId, metodoEntrega),
                         ],
                       ),
                       
@@ -281,7 +284,8 @@ class PedidosNegocioScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildEstadoDropdown(BuildContext context, String pedidoId, String estadoActual, String? paymentIntentId) {
+  // --- ACTUALIZADO: Ahora recibe el metodoEntrega ---
+  Widget _buildEstadoDropdown(BuildContext context, String pedidoId, String estadoActual, String? paymentIntentId, String metodoEntrega) {
     if (estadoActual == 'Entregado' || estadoActual == 'Cancelado') {
       Color colorFinal = estadoActual == 'Entregado' ? Colors.green : Colors.red;
       return Container(
@@ -291,15 +295,24 @@ class PedidosNegocioScreen extends StatelessWidget {
       );
     }
 
+    // Aquí determinamos cuál debe ser el estado intermedio
+    String estadoIntermedio = metodoEntrega == 'recoger' ? 'Listo para recoger' : 'En Camino';
+    
     List<String> estadosPermitidos = [];
-    if (estadoActual == 'Pendiente') estadosPermitidos = ['Pendiente', 'Preparando', 'Cancelado'];
-    else if (estadoActual == 'Preparando') estadosPermitidos = ['Preparando', 'En Camino', 'Cancelado'];
-    else if (estadoActual == 'En Camino') estadosPermitidos = ['En Camino', 'Entregado', 'Cancelado'];
-    else estadosPermitidos = [estadoActual];
+    if (estadoActual == 'Pendiente') {
+      estadosPermitidos = ['Pendiente', 'Preparando', 'Cancelado'];
+    } else if (estadoActual == 'Preparando') {
+      estadosPermitidos = ['Preparando', estadoIntermedio, 'Cancelado'];
+    } else if (estadoActual == estadoIntermedio || estadoActual == 'En Camino') {
+      // Soportamos 'En Camino' por si quedó algún registro viejo guardado en la base de datos
+      estadosPermitidos = [estadoActual, 'Entregado', 'Cancelado'];
+    } else {
+      estadosPermitidos = [estadoActual];
+    }
 
     Color color = Colors.orange;
     if (estadoActual == 'Preparando') color = Colors.blueAccent;
-    if (estadoActual == 'En Camino') color = Colors.purpleAccent;
+    if (estadoActual == 'En Camino' || estadoActual == 'Listo para recoger') color = Colors.purpleAccent;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10),
