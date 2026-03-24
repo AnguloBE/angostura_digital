@@ -22,15 +22,34 @@ class PedidosNegocioScreen extends StatelessWidget {
     try { await launchUrl(url, mode: LaunchMode.externalApplication); } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo abrir WhatsApp.'))); }
   }
 
-  Future<void> _abrirRutaEnMaps(BuildContext context, String direccionG) async {
-    final RegExp exp = RegExp(r'\[Coords:\s*(-?\d+\.\d+),\s*(-?\d+\.\d+)\]');
-    final match = exp.firstMatch(direccionG);
+  // --- ARREGLO: AHORA LEE EL GEOPOINT REAL Y TIENE UN MEJOR ENLACE DE MAPS ---
+  Future<void> _abrirRutaEnMaps(BuildContext context, String direccionG, GeoPoint? ubicacionGeo) async {
+    double? lat;
+    double? lng;
 
-    if (match != null) {
-      final lat = match.group(1);
-      final lng = match.group(2);
-      final url = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$lng?q=$lat,$lng");
-      try { await launchUrl(url, mode: LaunchMode.externalApplication); } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo abrir Google Maps.'), backgroundColor: Colors.red)); }
+    // 1. Primero intentamos usar las coordenadas GPS reales (el método nuevo)
+    if (ubicacionGeo != null) {
+      lat = ubicacionGeo.latitude;
+      lng = ubicacionGeo.longitude;
+    } 
+    // 2. Si es un pedido viejo, intentamos extraerlo del texto (Soporte antiguo)
+    else {
+      final RegExp exp = RegExp(r'\[Coords:\s*(-?\d+\.\d+),\s*(-?\d+\.\d+)\]');
+      final match = exp.firstMatch(direccionG);
+      if (match != null) {
+        lat = double.tryParse(match.group(1)!);
+        lng = double.tryParse(match.group(2)!);
+      }
+    }
+
+    if (lat != null && lng != null) {
+      // Enlace universal de Google Maps (funciona en Android y iOS)
+      final Uri url = Uri.parse("https://www.google.com/maps/search/?api=1&query=$lat,$lng");
+      try { 
+        await launchUrl(url, mode: LaunchMode.externalApplication); 
+      } catch (e) { 
+        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo abrir Google Maps.'), backgroundColor: Colors.red)); 
+      }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se encontraron coordenadas en este pedido.')));
     }
@@ -149,7 +168,6 @@ class PedidosNegocioScreen extends StatelessWidget {
               final notas = data['notas'] ?? '';
               final clienteId = data['cliente_id'];
               
-              // Rescatamos si es para domicilio o para recoger
               final metodoEntrega = data['metodo_entrega'] ?? 'domicilio'; 
               
               final String? paymentIntentId = data['payment_intent_id']?.toString(); 
@@ -165,6 +183,10 @@ class PedidosNegocioScreen extends StatelessWidget {
                 final hora12 = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
                 fechaFormateada = '${dt.day}/${dt.month}/${dt.year} • $hora12:${dt.minute.toString().padLeft(2, '0')} ${dt.hour >= 12 ? 'PM' : 'AM'}';
               }
+
+              // --- ARREGLO: LÓGICA DE VISIBILIDAD DEL BOTÓN DEL MAPA ---
+              // Revisamos si el pedido tiene un GeoPoint válido, o si es de los antiguos que traía [Coords:]
+              bool tieneMapa = data['ubicacion_geo'] != null || (data['direccion'] != null && data['direccion'].toString().contains('[Coords:'));
 
               return Card(
                 elevation: 3, margin: const EdgeInsets.only(bottom: 16),
@@ -187,7 +209,6 @@ class PedidosNegocioScreen extends StatelessWidget {
                               ],
                             ),
                           ),
-                          // Le pasamos el metodoEntrega a nuestra función de estados
                           _buildEstadoDropdown(context, doc.id, estadoActual, paymentIntentId, metodoEntrega),
                         ],
                       ),
@@ -202,13 +223,17 @@ class PedidosNegocioScreen extends StatelessWidget {
                           children: [
                             const Row(children: [Icon(Icons.delivery_dining, color: Colors.blueAccent, size: 20), SizedBox(width: 6), Text('Dirección de Entrega', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent))]),
                             const SizedBox(height: 6),
-                            Text(data['direccion'] ?? 'El cliente recogerá en el local.', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.black87)),
-                            if (data['direccion'] != null && data['direccion'].toString().contains('[Coords:')) ...[
+                            // Limpiamos el texto por si es un pedido viejo con [Coords:]
+                            Text((data['direccion'] ?? 'El cliente recogerá en el local.').replaceAll(RegExp(r'\n?\[Coords:.*\]'), ''), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: Colors.black87)),
+                            
+                            // AHORA USAMOS LA VARIABLE QUE CREAMOS ARRIBA
+                            if (tieneMapa) ...[
                               const SizedBox(height: 10),
                               ElevatedButton.icon(
                                 icon: const Icon(Icons.map, size: 18), label: const Text('Ver ruta en Google Maps'),
                                 style: ElevatedButton.styleFrom(backgroundColor: Colors.white, foregroundColor: Colors.blueAccent, elevation: 1),
-                                onPressed: () => _abrirRutaEnMaps(context, data['direccion']),
+                                // Pasamos ambos posibles valores (String viejo y GeoPoint nuevo)
+                                onPressed: () => _abrirRutaEnMaps(context, data['direccion'] ?? '', data['ubicacion_geo'] as GeoPoint?),
                               )
                             ]
                           ],
@@ -284,7 +309,6 @@ class PedidosNegocioScreen extends StatelessWidget {
     );
   }
 
-  // --- ACTUALIZADO: Ahora recibe el metodoEntrega ---
   Widget _buildEstadoDropdown(BuildContext context, String pedidoId, String estadoActual, String? paymentIntentId, String metodoEntrega) {
     if (estadoActual == 'Entregado' || estadoActual == 'Cancelado') {
       Color colorFinal = estadoActual == 'Entregado' ? Colors.green : Colors.red;
@@ -295,7 +319,6 @@ class PedidosNegocioScreen extends StatelessWidget {
       );
     }
 
-    // Aquí determinamos cuál debe ser el estado intermedio
     String estadoIntermedio = metodoEntrega == 'recoger' ? 'Listo para recoger' : 'En Camino';
     
     List<String> estadosPermitidos = [];
@@ -304,7 +327,6 @@ class PedidosNegocioScreen extends StatelessWidget {
     } else if (estadoActual == 'Preparando') {
       estadosPermitidos = ['Preparando', estadoIntermedio, 'Cancelado'];
     } else if (estadoActual == estadoIntermedio || estadoActual == 'En Camino') {
-      // Soportamos 'En Camino' por si quedó algún registro viejo guardado en la base de datos
       estadosPermitidos = [estadoActual, 'Entregado', 'Cancelado'];
     } else {
       estadosPermitidos = [estadoActual];

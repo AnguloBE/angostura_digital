@@ -9,6 +9,7 @@ import 'package:angostura_digital/globals.dart' as globals;
 import 'package:flutter_stripe/flutter_stripe.dart' hide Card;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 class CarritoScreen extends StatefulWidget {
   const CarritoScreen({super.key});
@@ -21,8 +22,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
   final TextEditingController _notasCtrl = TextEditingController();
   
   String? _direccionCompleta;
-  bool _cargandoDatos = true;
+  GeoPoint? _coordenadasEntrega; 
 
+  bool _cargandoDatos = true;
   bool _permiteRecoger = false;
   Map<String, dynamic> _tarifasEnvio = {};
   
@@ -38,21 +40,31 @@ class _CarritoScreenState extends State<CarritoScreen> {
   Future<void> _cargarDatosIniciales() async {
     final cart = Provider.of<CartProvider>(context, listen: false);
     
+    // 1. CARGAMOS LA UBICACIÓN DIRECTO DE LA BD DEL CLIENTE
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
       final doc = await FirebaseFirestore.instance.collection('usuarios').doc(user.uid).get();
-      if (doc.exists && doc.data()!.containsKey('direccion_entrega')) {
-        _direccionCompleta = doc.data()!['direccion_entrega'];
+      if (doc.exists) {
+        final data = doc.data()!;
+        if (data.containsKey('direccion_entrega')) {
+          _direccionCompleta = data['direccion_entrega'];
+        }
+        if (data.containsKey('coordenadas_entrega')) {
+          _coordenadasEntrega = data['coordenadas_entrega'] as GeoPoint?;
+        }
       }
     }
 
+    // 2. CARGAMOS LAS ZONAS DEL NEGOCIO
     if (cart.negocioIdActual != null) {
       final negDoc = await FirebaseFirestore.instance.collection('negocios').doc(cart.negocioIdActual).get();
       if (negDoc.exists) {
         final data = negDoc.data()!;
         _permiteRecoger = data['permite_recoger'] ?? false;
+        
         if (data.containsKey('tarifas_envio')) {
-          _tarifasEnvio = data['tarifas_envio'];
+          _tarifasEnvio = Map<String, dynamic>.from(data['tarifas_envio']);
+          // Eliminamos la auto-selección para obligar al usuario a elegir
         }
       }
     }
@@ -73,10 +85,25 @@ class _CarritoScreenState extends State<CarritoScreen> {
 
   Future<void> _mostrarFormularioDireccion() async {
     final resultado = await Navigator.push(context, MaterialPageRoute(builder: (_) => const MapaUbicacionScreen()));
-    if (resultado != null && resultado is String) {
-      setState(() => _direccionCompleta = resultado);
+    
+    if (resultado != null && resultado is Map) {
+      final String dirStr = resultado['direccion'];
+      final LatLng coords = resultado['coordenadas'];
+      final GeoPoint geo = GeoPoint(coords.latitude, coords.longitude);
+
+      setState(() {
+        _direccionCompleta = dirStr;
+        _coordenadasEntrega = geo;
+      });
+
+      // Guardamos en el perfil del cliente
       final user = FirebaseAuth.instance.currentUser;
-      if (user != null) await FirebaseFirestore.instance.collection('usuarios').doc(user.uid).update({'direccion_entrega': resultado});
+      if (user != null) {
+        await FirebaseFirestore.instance.collection('usuarios').doc(user.uid).update({
+          'direccion_entrega': dirStr,
+          'coordenadas_entrega': geo,
+        });
+      }
     }
   }
 
@@ -84,7 +111,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
     
-    if (_metodoSeleccionado == 'domicilio' && _direccionCompleta == null) return;
+    if (_metodoSeleccionado == 'domicilio' && (_direccionCompleta == null || _coordenadasEntrega == null)) return;
 
     final negocioId = cart.negocioIdActual;
     if (negocioId == null) return;
@@ -111,12 +138,12 @@ class _CarritoScreenState extends State<CarritoScreen> {
       'notas': _notasCtrl.text.trim(), 
       'metodo_entrega': _metodoSeleccionado,
       'direccion': infoDireccion, 
+      'ubicacion_geo': _metodoSeleccionado == 'domicilio' ? _coordenadasEntrega : null,
       'fecha': FieldValue.serverTimestamp(), 
       'payment_intent_id': paymentIntentId, 
     });
   }
 
-  // --- FUNCIÓN DE PAGO ARREGLADA (Ya no te saca si cancelas) ---
   Future<void> _procesarPago(BuildContext context, CartProvider cart) async {
     bool loaderAbierto = true;
     showDialog(context: context, barrierDismissible: false, builder: (context) => const Center(child: CircularProgressIndicator()));
@@ -132,7 +159,6 @@ class _CarritoScreenState extends State<CarritoScreen> {
       } else {
         await Stripe.instance.initPaymentSheet(paymentSheetParameters: SetupPaymentSheetParameters(paymentIntentClientSecret: clientSecret, merchantDisplayName: 'Angostura Digital'));
         
-        // Cerramos la ruedita de carga antes de abrir el pago de Stripe
         if (context.mounted) {
           Navigator.pop(context); 
           loaderAbierto = false;
@@ -141,7 +167,6 @@ class _CarritoScreenState extends State<CarritoScreen> {
         await Stripe.instance.presentPaymentSheet(); 
       }
       
-      // Si llegamos aquí, el pago FUE EXITOSO
       if (loaderAbierto && context.mounted) {
         Navigator.pop(context); 
         loaderAbierto = false;
@@ -155,12 +180,10 @@ class _CarritoScreenState extends State<CarritoScreen> {
         Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const MainNavigation(initialIndex: 2)), (route) => false);
       }
     } catch (e) {
-      // Si llegamos aquí, ALGO FALLÓ o EL CLIENTE CANCELÓ EL PAGO
       if (context.mounted) {
         if (loaderAbierto) {
-          Navigator.pop(context); // Solo cerramos la ruedita si seguía abierta
+          Navigator.pop(context); 
         }
-        
         if (e is StripeException) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pago cancelado. Tu carrito sigue guardado.'), backgroundColor: Colors.orange));
         } else {
@@ -170,18 +193,28 @@ class _CarritoScreenState extends State<CarritoScreen> {
     }
   }
 
-  bool _puedePagar() {
-    final cart = Provider.of<CartProvider>(context, listen: false);
+  bool _puedePagar(CartProvider cart) {
     if (cart.items.isEmpty) return false;
     if (_metodoSeleccionado == 'domicilio') {
-      if (_zonaSeleccionada == null || _direccionCompleta == null) return false;
+      if (_zonaSeleccionada == null || _direccionCompleta == null || _coordenadasEntrega == null) return false;
     }
     return true;
+  }
+
+  // Texto dinámico para decirle al usuario qué falta
+  String _obtenerTextoBoton(CartProvider cart) {
+    if (cart.items.isEmpty) return 'Carrito vacío';
+    if (_metodoSeleccionado == 'domicilio') {
+      if (_zonaSeleccionada == null) return 'Falta seleccionar Zona';
+      if (_direccionCompleta == null || _coordenadasEntrega == null) return 'Falta Dirección';
+    }
+    return 'Pagar Total';
   }
 
   @override
   Widget build(BuildContext context) {
     final cart = context.watch<CartProvider>();
+    final bool botonActivo = _puedePagar(cart);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Tu Pedido', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), backgroundColor: globals.colorFondo, iconTheme: const IconThemeData(color: Colors.white)),
@@ -233,26 +266,52 @@ class _CarritoScreenState extends State<CarritoScreen> {
                         if (_tarifasEnvio.isEmpty)
                            Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(8)), child: const Text('Este restaurante no tiene entregas a domicilio configuradas.', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)))
                         else ...[
+                          
+                          // --- MENSAJE DE ALERTA ROJO SI FALTA ZONA ---
+                          if (_zonaSeleccionada == null)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8.0),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.warning_amber_rounded, color: Colors.red.shade700, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text('¡Por favor, selecciona tu zona de envío!', style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+
+                          // --- DROPDOWN MEJORADO CON ESTILO DE ERROR ---
                           DropdownButtonFormField<String>(
-                            decoration: InputDecoration(labelText: 'Selecciona tu Zona', border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)), filled: true, fillColor: Colors.white),
+                            decoration: InputDecoration(
+                              labelText: 'Selecciona tu Zona', 
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                              enabledBorder: OutlineInputBorder(
+                                borderSide: BorderSide(color: _zonaSeleccionada == null ? Colors.red.shade400 : Colors.grey.shade400),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              filled: true, 
+                              fillColor: _zonaSeleccionada == null ? Colors.red.shade50 : Colors.white
+                            ),
                             value: _zonaSeleccionada,
+                            hint: Text('Toca para elegir tu zona', style: TextStyle(color: _zonaSeleccionada == null ? Colors.red.shade800 : Colors.black54)),
                             items: _tarifasEnvio.keys.map((zona) => DropdownMenuItem(value: zona, child: Text('$zona (Costo: \$${_tarifasEnvio[zona]})'))).toList(),
                             onChanged: (val) {
                               setState(() => _zonaSeleccionada = val);
                               _actualizarLogisticaEnProvider();
                             },
                           ),
+
                           const SizedBox(height: 10),
                           Card(
                             elevation: 0,
-                            color: _direccionCompleta == null ? Colors.red.shade50 : Colors.blue.shade50,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: BorderSide(color: _direccionCompleta == null ? Colors.red.shade200 : Colors.blue.shade200)),
+                            color: _direccionCompleta == null || _coordenadasEntrega == null ? Colors.red.shade50 : Colors.blue.shade50,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: BorderSide(color: _direccionCompleta == null || _coordenadasEntrega == null ? Colors.red.shade200 : Colors.blue.shade200)),
                             child: Padding(
                               padding: const EdgeInsets.all(12),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Row(children: [Icon(Icons.location_on, color: _direccionCompleta == null ? Colors.red : Colors.blueAccent), const SizedBox(width: 8), Text('Dirección Exacta', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: _direccionCompleta == null ? Colors.red.shade800 : Colors.blue.shade900))]),
+                                  Row(children: [Icon(Icons.location_on, color: _direccionCompleta == null || _coordenadasEntrega == null ? Colors.red : Colors.blueAccent), const SizedBox(width: 8), Text('Dirección Exacta', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: _direccionCompleta == null || _coordenadasEntrega == null ? Colors.red.shade800 : Colors.blue.shade900))]),
                                   const SizedBox(height: 8),
                                   Text(_direccionCompleta ?? 'Falta dirección de entrega.', style: TextStyle(color: Colors.black87, fontWeight: _direccionCompleta == null ? FontWeight.normal : FontWeight.w500)),
                                   const SizedBox(height: 10),
@@ -293,7 +352,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
                     children: [
                       _filaResumen('Subtotal:', '\$${cart.subtotal.toStringAsFixed(2)}', false),
                       if (_metodoSeleccionado == 'domicilio')
-                        _filaResumen('Envío a $_zonaSeleccionada:', '\$${cart.costoEnvio.toStringAsFixed(2)}', true),
+                        _filaResumen('Envío a ${_zonaSeleccionada ?? "ZONA PENDIENTE"}:', '\$${cart.costoEnvio.toStringAsFixed(2)}', true),
                       _filaResumen('Tarifa de app:', '\$${cart.tarifaPlataforma.toStringAsFixed(2)}', true),
                       const Divider(height: 20, thickness: 2),
                       _filaResumen('Total a pagar:', '\$${cart.total.toStringAsFixed(2)}', false, esTotal: true),
@@ -305,9 +364,10 @@ class _CarritoScreenState extends State<CarritoScreen> {
                       SizedBox(
                         width: double.infinity, height: 50,
                         child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(backgroundColor: _puedePagar() ? Colors.blueAccent : Colors.grey, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-                          onPressed: _puedePagar() ? () => _procesarPago(context, cart) : null,
-                          child: Text(!_puedePagar() ? 'Faltan datos' : 'Pagar Total', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                          style: ElevatedButton.styleFrom(backgroundColor: botonActivo ? Colors.blueAccent : Colors.grey, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                          onPressed: botonActivo ? () => _procesarPago(context, cart) : null,
+                          // --- EL BOTÓN AHORA TE DICE EXACTAMENTE QUÉ FALTA ---
+                          child: Text(_obtenerTextoBoton(cart), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                         ),
                       ),
                     ],

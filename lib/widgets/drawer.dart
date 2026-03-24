@@ -7,27 +7,122 @@ import 'package:angostura_digital/screens/usuarios_screen.dart';
 import 'package:angostura_digital/screens/crear_negocio_screen.dart'; 
 import 'package:angostura_digital/screens/gestionar_negocio_screen.dart';
 import 'package:angostura_digital/screens/revision_negocios_screen.dart'; 
-// ¡AQUÍ IMPORTAMOS LA NUEVA PANTALLA DE ZONAS!
 import 'package:angostura_digital/screens/admin_zonas_screen.dart';
+import 'package:angostura_digital/screens/login_screen.dart'; // Para redirigir al salir
 
-class DrawerPrincipal extends StatelessWidget {
+class DrawerPrincipal extends StatefulWidget {
   const DrawerPrincipal({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
+  State<DrawerPrincipal> createState() => _DrawerPrincipalState();
+}
 
+class _DrawerPrincipalState extends State<DrawerPrincipal> {
+  final User? user = FirebaseAuth.instance.currentUser;
+  bool _isCerrandoSesion = false;
+
+  // --- FUNCIÓN PARA EDITAR EL NOMBRE ---
+  Future<void> _editarNombre() async {
+    if (user == null) return;
+
+    final TextEditingController nombreCtrl = TextEditingController(text: user!.displayName);
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Editar Perfil', style: TextStyle(fontWeight: FontWeight.bold)),
+          content: TextField(
+            controller: nombreCtrl,
+            decoration: const InputDecoration(
+              labelText: 'Tu Nombre',
+              prefixIcon: Icon(Icons.person),
+              border: OutlineInputBorder(),
+            ),
+            textCapitalization: TextCapitalization.words,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white),
+              onPressed: () async {
+                final nuevoNombre = nombreCtrl.text.trim();
+                if (nuevoNombre.isNotEmpty) {
+                  // Actualizamos en Firebase Auth
+                  await user!.updateDisplayName(nuevoNombre);
+                  
+                  // Actualizamos en Firestore
+                  await FirebaseFirestore.instance.collection('usuarios').doc(user!.uid).set({
+                    'nombre': nuevoNombre,
+                  }, SetOptions(merge: true));
+
+                  // Refrescamos la UI del Drawer
+                  setState(() {});
+                  
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Perfil actualizado con éxito'), backgroundColor: Colors.green)
+                    );
+                  }
+                }
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // --- FUNCIÓN PARA CERRAR SESIÓN ---
+  Future<void> _cerrarSesion() async {
+    setState(() => _isCerrandoSesion = true);
+    try {
+      await AuthService().signOut();
+      if (mounted) {
+        // Cierra el Drawer y manda al usuario al Login borrando el historial de navegación
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const LoginScreen()), 
+          (route) => false
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isCerrandoSesion = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al cerrar sesión: $e'), backgroundColor: Colors.redAccent)
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Drawer(
       child: Column(
         children: [
-          // HEADER SIMPLIFICADO
-          UserAccountsDrawerHeader(
-            decoration: BoxDecoration(color: globals.colorFondo),
-            accountName: Text(user?.displayName ?? 'Usuario', style: const TextStyle(fontWeight: FontWeight.bold)),
-            accountEmail: Text(user?.phoneNumber ?? user?.email ?? 'Sin contacto'),
-            currentAccountPicture: const CircleAvatar(
-              backgroundColor: Colors.white,
-              child: Icon(Icons.person, size: 40, color: Colors.grey),
+          // HEADER INTERACTIVO (Tocar para editar perfil)
+          InkWell(
+            onTap: _editarNombre,
+            child: UserAccountsDrawerHeader(
+              decoration: BoxDecoration(color: globals.colorFondo),
+              accountName: Row(
+                children: [
+                  Text(user?.displayName ?? 'Usuario', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.edit, color: Colors.white70, size: 16),
+                ],
+              ),
+              accountEmail: Text(user?.phoneNumber ?? user?.email ?? 'Sin contacto'),
+              currentAccountPicture: const CircleAvatar(
+                backgroundColor: Colors.white,
+                child: Icon(Icons.person, size: 40, color: Colors.grey),
+              ),
+              margin: EdgeInsets.zero, // Quita el margen inferior por defecto para pegarlo a la lista
             ),
           ),
 
@@ -38,7 +133,7 @@ class DrawerPrincipal extends StatelessWidget {
               children: [
                 if (user != null)
                   StreamBuilder<DocumentSnapshot>(
-                    stream: FirebaseFirestore.instance.collection('usuarios').doc(user.uid).snapshots(),
+                    stream: FirebaseFirestore.instance.collection('usuarios').doc(user!.uid).snapshots(),
                     builder: (context, snapshot) {
                       if (snapshot.hasData && snapshot.data!.exists) {
                         final data = snapshot.data!.data() as Map<String, dynamic>;
@@ -51,11 +146,10 @@ class DrawerPrincipal extends StatelessWidget {
                             if (rol == 'admin' || rol == 'vendedor') ...[
                               _buildSectionTitle('MIS NEGOCIOS'),
                               
-                              // AQUÍ RECUPERAMOS TUS NEGOCIOS
                               StreamBuilder<QuerySnapshot>(
                                 stream: FirebaseFirestore.instance
                                     .collection('negocios')
-                                    .where('propietario_uid', isEqualTo: user.uid)
+                                    .where('propietario_uid', isEqualTo: user!.uid)
                                     .snapshots(),
                                 builder: (context, negociosSnap) {
                                   if (negociosSnap.connectionState == ConnectionState.waiting) {
@@ -143,7 +237,6 @@ class DrawerPrincipal extends StatelessWidget {
                               
                               const SizedBox(height: 10),
                               
-                              // --- ACCESO PERRÓN A ZONAS ---
                               Container(
                                 margin: const EdgeInsets.symmetric(horizontal: 10),
                                 decoration: BoxDecoration(
@@ -163,7 +256,6 @@ class DrawerPrincipal extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(height: 10),
-                              // -----------------------------
                             ],
                           ],
                         );
@@ -176,13 +268,13 @@ class DrawerPrincipal extends StatelessWidget {
           ),
           
           // BOTTOM - LOGOUT
-          const Divider(), 
+          const Divider(height: 1), 
           ListTile(
-            leading: const Icon(Icons.logout, color: Colors.redAccent),
-            title: const Text("Cerrar Sesión", style: TextStyle(color: Colors.redAccent)),
-            onTap: () async {
-              await AuthService().signOut(); // Asegúrate de que este método exista
-            },
+            leading: _isCerrandoSesion 
+              ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.redAccent, strokeWidth: 2))
+              : const Icon(Icons.logout, color: Colors.redAccent),
+            title: const Text("Cerrar Sesión", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+            onTap: _isCerrandoSesion ? null : _cerrarSesion,
           ),
           const SizedBox(height: 20),
         ],

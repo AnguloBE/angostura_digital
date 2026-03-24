@@ -5,12 +5,11 @@ import 'package:http/http.dart' as http;
 import 'package:angostura_digital/globals.dart' as globals;
 
 class MapaUbicacionScreen extends StatefulWidget {
-  // === NUEVO: Interruptor para saber qué devolver ===
   final bool soloCoordenadas; 
 
   const MapaUbicacionScreen({
     super.key, 
-    this.soloCoordenadas = false, // Por defecto es false para no afectar tu carrito
+    this.soloCoordenadas = false, 
   });
 
   @override
@@ -62,20 +61,25 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
       return;
     }
 
-    // === NUEVO: Si es para el negocio, devolvemos puro GPS y nos saltamos las referencias ===
+    // Si es para el negocio, devolvemos puro GPS y nos saltamos las referencias
     if (widget.soloCoordenadas) {
       Navigator.pop(context, _posicionSeleccionada);
       return;
     }
 
-    // Lógica normal para el carrito
+    // Si es para el CLIENTE (Carrito):
     if (_referenciasCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Las referencias son obligatorias para que el repartidor no se pierda.'), backgroundColor: Colors.orange));
       return;
     }
 
-    final direccionFinal = "$_direccionTraducida\n📍 Referencias: ${_referenciasCtrl.text.trim()}\n[Coords: ${_posicionSeleccionada!.latitude}, ${_posicionSeleccionada!.longitude}]";
-    Navigator.pop(context, direccionFinal);
+    final direccionFinal = "$_direccionTraducida\n📍 Referencias: ${_referenciasCtrl.text.trim()}";
+    
+    // AQUÍ ESTÁ LA MAGIA: Devolvemos un Map con texto y coordenadas por separado
+    Navigator.pop(context, {
+      'direccion': direccionFinal,
+      'coordenadas': _posicionSeleccionada,
+    });
   }
 
   @override
@@ -111,7 +115,6 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
                 else 
                   Text(_direccionTraducida, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
                 
-                // === NUEVO: Ocultamos las referencias si estamos configurando el negocio ===
                 if (!widget.soloCoordenadas) ...[
                   const Divider(height: 30),
                   TextField(
