@@ -75,7 +75,7 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
 
     final direccionFinal = "$_direccionTraducida\n📍 Referencias: ${_referenciasCtrl.text.trim()}";
     
-    // AQUÍ ESTÁ LA MAGIA: Devolvemos un Map con texto y coordenadas por separado
+    // Devolvemos un Map con texto y coordenadas por separado
     Navigator.pop(context, {
       'direccion': direccionFinal,
       'coordenadas': _posicionSeleccionada,
@@ -94,7 +94,10 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
         children: [
           Expanded(
             child: GoogleMap(
-              initialCameraPosition: const CameraPosition(target: _centroAngostura, zoom: 15),
+              // --- AQUÍ ESTÁ LA LÍNEA MÁGICA ---
+              mapType: MapType.hybrid, // Muestra foto de satélite + Nombres de calles
+              
+              initialCameraPosition: const CameraPosition(target: _centroAngostura, zoom: 16), // Subí un poquito el zoom a 16 para que vean las casas más de cerca al abrir
               onMapCreated: (controller) => _mapController = controller,
               onTap: _traducirCoordenadas,
               markers: _posicionSeleccionada != null 
