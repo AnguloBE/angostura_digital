@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart'; 
 import 'package:angostura_digital/globals.dart' as globals;
+import 'package:angostura_digital/widgets/pedido_producto_linea.dart';
+import 'package:angostura_digital/utils/tiempo_estimado_utils.dart';
+import 'package:angostura_digital/utils/pedido_servicios_utils.dart';
 import 'package:url_launcher/url_launcher.dart'; // IMPORTANTE PARA EL MAPA
 
 class PedidosTab extends StatelessWidget {
@@ -20,13 +22,12 @@ class PedidosTab extends StatelessWidget {
     }
   }
 
-  // --- FUNCIÓN ARREGLADA: AHORA RECIBE EL ID DE PAGO Y HABLA CON STRIPE ---
-  Future<void> _cancelarPedidoCliente(BuildContext context, String pedidoId, String? paymentIntentId) async {
+  Future<void> _cancelarPedidoCliente(BuildContext context, String pedidoId) async {
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Cancelar Pedido'),
-        content: const Text('¿Estás seguro de que quieres cancelar este pedido? Se iniciará el proceso de reembolso automáticamente a tu tarjeta.'),
+        content: const Text('¿Estás seguro de que quieres cancelar este pedido?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('No, mantener')),
           ElevatedButton(
@@ -42,16 +43,11 @@ class PedidosTab extends StatelessWidget {
       showDialog(context: context, barrierDismissible: false, builder: (ctx) => const Center(child: CircularProgressIndicator()));
 
       try {
-        if (paymentIntentId != null && paymentIntentId.trim().isNotEmpty) {
-          final HttpsCallable callable = FirebaseFunctions.instance.httpsCallable('reembolsarPago');
-          await callable.call(<String, dynamic>{'paymentIntentId': paymentIntentId});
-        }
-
         await FirebaseFirestore.instance.collection('pedidos').doc(pedidoId).update({'estado': 'Cancelado'});
         
         if (context.mounted) {
           Navigator.pop(context); 
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pedido cancelado y dinero en proceso de reembolso.'), backgroundColor: Colors.orange));
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Pedido cancelado.'), backgroundColor: Colors.orange));
         }
       } catch (e) {
         if (context.mounted) {
@@ -67,7 +63,11 @@ class PedidosTab extends StatelessWidget {
     final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Mis Pedidos', style: TextStyle(fontWeight: FontWeight.bold)), backgroundColor: globals.colorFondo, foregroundColor: Colors.white),
+      appBar: AppBar(
+        title: const Text('Mis pedidos y citas', style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: globals.colorFondo,
+        foregroundColor: Colors.white,
+      ),
       body: user == null
           ? const Center(child: Text('Inicia sesión para ver tus pedidos.'))
           : StreamBuilder<QuerySnapshot>(
@@ -94,9 +94,10 @@ class PedidosTab extends StatelessWidget {
                     final notas = data['notas'] ?? '';
                     final tiempoEstimado = data['tiempo_estimado'] ?? '';
                     final estadoActual = data['estado'] ?? 'Pendiente';
+                    final esServicios = PedidoServiciosUtils.esPedidoServicios(data);
+                    final estadoVisible =
+                        PedidoServiciosUtils.etiquetaEstadoParaCliente(estadoActual, data);
                     final negocioId = data['negocio_id'] ?? '';
-                    
-                    final String? paymentIntentId = data['payment_intent_id']?.toString();
                     
                     final Timestamp? timestamp = data['fecha'] as Timestamp?;
                     String fechaFormateada = 'Pendiente...';
@@ -109,7 +110,10 @@ class PedidosTab extends StatelessWidget {
                     Color colorEstado = Colors.orange;
                     if (estadoActual == 'Preparando') colorEstado = Colors.blueAccent;
                     if (estadoActual == 'En Camino') colorEstado = Colors.purpleAccent;
-                    if (estadoActual == 'Entregado') colorEstado = Colors.green;
+                    if (estadoActual == 'Entregado' ||
+                        estadoActual == PedidoServiciosUtils.estadoConfirmada) {
+                      colorEstado = Colors.green;
+                    }
                     if (estadoActual == 'Cancelado') colorEstado = Colors.red;
 
                     return Card(
@@ -123,11 +127,21 @@ class PedidosTab extends StatelessWidget {
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(data['negocio_nombre'] ?? 'Local', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)), const SizedBox(height: 4), Row(children: [const Icon(Icons.access_time, size: 14, color: Colors.blueGrey), const SizedBox(width: 4), Text(fechaFormateada, style: const TextStyle(fontSize: 13, color: Colors.blueGrey, fontWeight: FontWeight.w500))])])),
-                                Chip(label: Text(estadoActual, style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)), backgroundColor: colorEstado, padding: EdgeInsets.zero)
+                                Chip(
+                                  label: Text(estadoVisible,
+                                      style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold)),
+                                  backgroundColor: colorEstado,
+                                  padding: EdgeInsets.zero,
+                                )
                               ],
                             ),
                             
-                            if (tiempoEstimado.isNotEmpty && estadoActual != 'Entregado' && estadoActual != 'Cancelado') ...[
+                            if (!esServicios &&
+                                tiempoEstimado.isNotEmpty &&
+                                debeMostrarTiempoEnPedido(estadoActual)) ...[
                               const SizedBox(height: 12),
                               Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.blue.shade200)), child: Row(children: [const Icon(Icons.timer, color: Colors.blueAccent, size: 20), const SizedBox(width: 8), Expanded(child: Text('Tiempo estimado: $tiempoEstimado', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent)))]))
                             ],
@@ -139,17 +153,37 @@ class PedidosTab extends StatelessWidget {
 
                             const Divider(height: 20),
                             if (data['productos'] != null)
-                              ...((data['productos'] as List<dynamic>).map((item) => Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('${item['cantidad']}x  ${item['nombre']}', style: const TextStyle(color: Colors.black87)), Text('\$${(item['precio'] * item['cantidad']).toStringAsFixed(2)}', style: const TextStyle(color: Colors.black54))])))),
+                              ...((data['productos'] as List<dynamic>).map(
+                                (item) => PedidoProductoLinea(
+                                  item: Map<String, dynamic>.from(item as Map),
+                                ),
+                              )),
                             
                             const Divider(height: 20),
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
                                 Text('Subtotal: \$${data['subtotal']?.toStringAsFixed(2) ?? '0.00'}', style: const TextStyle(color: Colors.black54)),
-                                Text('Envío a domicilio: \$${data['costo_envio']?.toStringAsFixed(2) ?? '0.00'}', style: const TextStyle(color: Colors.black54)),
-                                Text('Tarifa por uso de app: \$${data['tarifa_plataforma']?.toStringAsFixed(2) ?? '0.00'}', style: const TextStyle(color: Colors.black54)),
+                                if (!esServicios &&
+                                    (data['metodo_entrega'] ?? 'domicilio') == 'domicilio' &&
+                                    ((data['costo_envio'] ?? 0) as num).toDouble() > 0)
+                                  Text(
+                                    'Envío: \$${(data['costo_envio'] as num?)?.toStringAsFixed(2) ?? '0.00'}',
+                                    style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
+                                  ),
+                                if (data['comision_pagada_por'] == 'cliente' &&
+                                    ((data['comision_app'] ?? 0) as num).toDouble() > 0)
+                                  Text(
+                                    'Uso de la app: \$${(data['comision_app'] as num).toStringAsFixed(2)}',
+                                    style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
+                                  )
+                                else if (!esServicios && data['metodo_entrega'] == 'recoger')
+                                  const Text(
+                                    'Recoger en local (sin envío)',
+                                    style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600),
+                                  ),
                                 const SizedBox(height: 5),
-                                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Total pagado:', style: TextStyle(fontWeight: FontWeight.bold)), Text('\$${data['total']?.toStringAsFixed(2) ?? '0.00'}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16))]),
+                                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Total del pedido:', style: TextStyle(fontWeight: FontWeight.bold)), Text('\$${data['total']?.toStringAsFixed(2) ?? '0.00'}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16))]),
                               ],
                             ),
 
@@ -187,9 +221,9 @@ class PedidosTab extends StatelessWidget {
                                 width: double.infinity,
                                 child: OutlinedButton.icon(
                                   icon: const Icon(Icons.cancel_outlined),
-                                  label: const Text('Cancelar Pedido'),
+                                  label: Text(esServicios ? 'Cancelar cita' : 'Cancelar Pedido'),
                                   style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                                  onPressed: () => _cancelarPedidoCliente(context, doc.id, paymentIntentId),
+                                  onPressed: () => _cancelarPedidoCliente(context, doc.id),
                                 ),
                               )
                             ]

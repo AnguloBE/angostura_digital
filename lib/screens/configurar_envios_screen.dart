@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:angostura_digital/globals.dart' as globals;
+import 'package:angostura_digital/screens/mapa_ubicacion_screen.dart';
 
 class ConfigurarEnviosScreen extends StatefulWidget {
   final String negocioId;
@@ -13,173 +15,395 @@ class ConfigurarEnviosScreen extends StatefulWidget {
 class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
   bool _permiteRecoger = true;
   bool _isLoading = true;
-  
-  // Ubicación física del negocio
-  String? _ubicacionLocal;
-  
-  // Lista dinámica traída desde Firebase
-  List<String> _zonasDisponibles = [];
-  
-  // Controladores y estados
-  final Map<String, TextEditingController> _controladoresZonas = {};
-  final Map<String, bool> _zonasActivas = {};
+  GeoPoint? _ubicacionGeoNegocio;
+
+  // Métodos de pago que acepta el negocio.
+  final Set<String> _metodosPago = {'efectivo'};
+  static const List<String> _opcionesPago = [
+    'efectivo',
+    'tarjeta',
+    'transferencia',
+  ];
+
+  final TextEditingController _costoPorKmCtrl = TextEditingController();
+  final TextEditingController _envioMinimoCtrl = TextEditingController();
+  final TextEditingController _distanciaMaxCtrl = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _cargarZonasYConfiguracion();
+    _cargarConfiguracion();
   }
 
-  Future<void> _cargarZonasYConfiguracion() async {
-    // 1. Traemos la lista maestra de zonas que el Admin creó
-    final zonasSnap = await FirebaseFirestore.instance.collection('zonas').orderBy('nombre').get();
-    
-    _zonasDisponibles = zonasSnap.docs.map((doc) => doc['nombre'] as String).toList();
-    
-    for (var zona in _zonasDisponibles) {
-      _controladoresZonas[zona] = TextEditingController();
-      _zonasActivas[zona] = false;
-    }
+  @override
+  void dispose() {
+    _costoPorKmCtrl.dispose();
+    _envioMinimoCtrl.dispose();
+    _distanciaMaxCtrl.dispose();
+    super.dispose();
+  }
 
-    // 2. Traemos la configuración guardada del negocio
+  Future<void> _cargarConfiguracion() async {
     final doc = await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).get();
-    
+
     if (doc.exists && doc.data() != null) {
       final data = doc.data()!;
-      
       if (data.containsKey('permite_recoger')) _permiteRecoger = data['permite_recoger'];
-      
-      // Verificamos si ya guardó su ubicación física y si aún existe en la lista del admin
-      if (data.containsKey('ubicacion_local') && _zonasDisponibles.contains(data['ubicacion_local'])) {
-        _ubicacionLocal = data['ubicacion_local'];
+      _ubicacionGeoNegocio = data['ubicacion_geo'] as GeoPoint?;
+      if (data['costo_por_km'] != null) _costoPorKmCtrl.text = data['costo_por_km'].toString();
+      if (data['envio_minimo'] != null) _envioMinimoCtrl.text = data['envio_minimo'].toString();
+      if (data['distancia_maxima_km'] != null) {
+        _distanciaMaxCtrl.text = data['distancia_maxima_km'].toString();
       }
-      
-      if (data.containsKey('tarifas_envio')) {
-        Map<String, dynamic> tarifas = data['tarifas_envio'];
-        tarifas.forEach((zona, precio) {
-          // Solo cargamos el precio si el Admin no ha borrado esa zona de la lista
-          if (_controladoresZonas.containsKey(zona)) {
-            _controladoresZonas[zona]!.text = precio.toString();
-            _zonasActivas[zona] = true;
-          }
-        });
+      final metodos = (data['metodos_pago'] as List?)
+          ?.map((e) => e.toString())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (metodos != null && metodos.isNotEmpty) {
+        _metodosPago
+          ..clear()
+          ..addAll(metodos);
       }
     }
-    
+
     setState(() => _isLoading = false);
   }
 
+  String _etiquetaPago(String m) {
+    switch (m) {
+      case 'efectivo':
+        return 'Efectivo';
+      case 'tarjeta':
+        return 'Tarjeta (terminal)';
+      case 'transferencia':
+        return 'Transferencia';
+      default:
+        return m;
+    }
+  }
+
+  IconData _iconoPago(String m) {
+    switch (m) {
+      case 'efectivo':
+        return Icons.payments;
+      case 'tarjeta':
+        return Icons.credit_card;
+      case 'transferencia':
+        return Icons.account_balance;
+      default:
+        return Icons.payment;
+    }
+  }
+
+  Future<void> _fijarUbicacionGpsNegocio() async {
+    final resultado = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const MapaUbicacionScreen(soloCoordenadas: true)),
+    );
+    if (resultado == null) return;
+
+    double? lat;
+    double? lng;
+    if (resultado is LatLng) {
+      lat = resultado.latitude;
+      lng = resultado.longitude;
+    } else if (resultado is GeoPoint) {
+      lat = resultado.latitude;
+      lng = resultado.longitude;
+    }
+
+    if (lat != null && lng != null) {
+      final geo = GeoPoint(lat, lng);
+      setState(() => _ubicacionGeoNegocio = geo);
+      await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update({
+        'ubicacion_geo': geo,
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ubicación GPS del local guardada.'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _guardarConfiguracion() async {
-    if (_ubicacionLocal == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Por favor, selecciona la ubicación física de tu local.'), backgroundColor: Colors.orange));
+    final costoKm = double.tryParse(_costoPorKmCtrl.text.trim()) ?? 0;
+    if (costoKm > 0 && _ubicacionGeoNegocio == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Para cobrar por kilómetro debes marcar la ubicación GPS exacta del local.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    if (_metodosPago.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Elige al menos un método de pago que aceptas.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
       return;
     }
 
     setState(() => _isLoading = true);
-    Map<String, double> tarifasFinales = {};
-    
-    _zonasActivas.forEach((zona, activa) {
-      if (activa && _controladoresZonas[zona]!.text.isNotEmpty) {
-        tarifasFinales[zona] = double.tryParse(_controladoresZonas[zona]!.text) ?? 0.0;
-      }
-    });
 
-    await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update({
-      'ubicacion_local': _ubicacionLocal, // Guardamos dónde está físicamente
+    final datos = <String, dynamic>{
       'permite_recoger': _permiteRecoger,
-      'tarifas_envio': tarifasFinales,
-    });
+      'costo_por_km': costoKm,
+      'envio_minimo': double.tryParse(_envioMinimoCtrl.text.trim()) ?? 0,
+      'metodos_pago': _opcionesPago.where(_metodosPago.contains).toList(),
+      'tarifas_envio': FieldValue.delete(),
+      'ubicacion_local': FieldValue.delete(),
+      if (_distanciaMaxCtrl.text.trim().isNotEmpty)
+        'distancia_maxima_km': double.tryParse(_distanciaMaxCtrl.text.trim()),
+    };
+
+    if (_ubicacionGeoNegocio != null) {
+      datos['ubicacion_geo'] = _ubicacionGeoNegocio;
+    }
+
+    await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update(datos);
 
     if (mounted) {
       setState(() => _isLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Configuración guardada exitosamente'), backgroundColor: Colors.green));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Configuración guardada exitosamente'), backgroundColor: Colors.green),
+      );
       Navigator.pop(context);
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final usaKm = (double.tryParse(_costoPorKmCtrl.text.trim()) ?? 0) > 0;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Logística y Envíos'), backgroundColor: globals.colorFondo, foregroundColor: Colors.white),
-      body: _isLoading 
-        ? const Center(child: CircularProgressIndicator())
-        : ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              // --- NUEVO: UBICACIÓN FÍSICA DEL LOCAL ---
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(color: Colors.blue.shade50, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.blue.shade200)),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Row(children: [Icon(Icons.storefront, color: Colors.blueAccent), SizedBox(width: 8), Text('Ubicación Física del Local', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blueAccent))]),
-                    const SizedBox(height: 8),
-                    const Text('¿En qué zona está situado este negocio?', style: TextStyle(color: Colors.black87)),
-                    const SizedBox(height: 10),
-                    DropdownButtonFormField<String>(
-                      decoration: const InputDecoration(border: OutlineInputBorder(), filled: true, fillColor: Colors.white),
-                      hint: const Text('Selecciona una zona'),
-                      value: _ubicacionLocal,
-                      items: _zonasDisponibles.map((zona) => DropdownMenuItem(value: zona, child: Text(zona))).toList(),
-                      onChanged: (val) => setState(() => _ubicacionLocal = val),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              
-              SwitchListTile(
-                title: const Text('Permitir "Recoger en el Local"', style: TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: const Text('El cliente podrá ir a buscar su comida sin pagar envío.'),
-                value: _permiteRecoger,
-                activeColor: Colors.blueAccent,
-                onChanged: (val) => setState(() => _permiteRecoger = val),
-              ),
-              const Divider(height: 30, thickness: 2),
-              
-              const Text('Zonas de Entrega a Domicilio', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blueAccent)),
-              const Text('Activa las zonas a las que tu repartidor puede ir y ponles un precio.', style: TextStyle(color: Colors.grey)),
-              const SizedBox(height: 15),
-              
-              if (_zonasDisponibles.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Center(child: Text('El administrador aún no ha registrado zonas de entrega.', style: TextStyle(color: Colors.red), textAlign: TextAlign.center)),
-                )
-              else
-                ..._zonasDisponibles.map((zona) {
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 10),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Row(
+      appBar: AppBar(
+        title: const Text('Logística y Envíos'),
+        backgroundColor: globals.colorFondo,
+        foregroundColor: Colors.white,
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
                         children: [
-                          Checkbox(value: _zonasActivas[zona], activeColor: Colors.blueAccent, onChanged: (val) => setState(() => _zonasActivas[zona] = val!)),
-                          Expanded(child: Text(zona, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500))),
-                          if (_zonasActivas[zona]!)
-                            SizedBox(
-                              width: 100,
-                              child: TextField(
-                                controller: _controladoresZonas[zona],
-                                keyboardType: TextInputType.number,
-                                decoration: const InputDecoration(prefixText: '\$ ', labelText: 'Costo', border: OutlineInputBorder()),
-                              ),
-                            )
+                          Icon(Icons.storefront, color: Colors.blueAccent),
+                          SizedBox(width: 8),
+                          Text(
+                            'Ubicación del local',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blueAccent),
+                          ),
                         ],
                       ),
-                    ),
-                  );
-                }),
-              
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                icon: const Icon(Icons.save), label: const Text('Guardar Configuración', style: TextStyle(fontSize: 16)),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 15)),
-                onPressed: _guardarConfiguracion,
-              )
-            ],
-          ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Marca en el mapa dónde está tu negocio. El envío se calcula por distancia hasta el cliente.',
+                        style: TextStyle(color: Colors.black87, fontSize: 13),
+                      ),
+                      const SizedBox(height: 14),
+                      Row(
+                        children: [
+                          Icon(
+                            _ubicacionGeoNegocio != null ? Icons.check_circle : Icons.warning_amber,
+                            color: _ubicacionGeoNegocio != null ? Colors.green : Colors.orange,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _ubicacionGeoNegocio != null
+                                  ? 'GPS del local configurado'
+                                  : 'Falta marcar el local en el mapa',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: _ubicacionGeoNegocio != null ? Colors.green.shade800 : Colors.orange.shade900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _fijarUbicacionGpsNegocio,
+                          icon: const Icon(Icons.add_location_alt),
+                          label: Text(_ubicacionGeoNegocio != null ? 'Cambiar ubicación GPS' : 'Marcar local en mapa'),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.green.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Envío por distancia',
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.green),
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'El cliente confirma en mapa satelital y el costo se calcula según los km al local.',
+                        style: TextStyle(color: Colors.black87, fontSize: 13),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: _costoPorKmCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Costo por kilómetro (\$)',
+                          hintText: 'Ej. 15',
+                          border: OutlineInputBorder(),
+                          filled: true,
+                          fillColor: Colors.white,
+                          prefixText: '\$ ',
+                        ),
+                        onChanged: (_) => setState(() {}),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _envioMinimoCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Mínimo de envío (opcional)',
+                          border: OutlineInputBorder(),
+                          filled: true,
+                          fillColor: Colors.white,
+                          prefixText: '\$ ',
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _distanciaMaxCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Distancia máxima de entrega (km, opcional)',
+                          border: OutlineInputBorder(),
+                          filled: true,
+                          fillColor: Colors.white,
+                        ),
+                      ),
+                      if (usaKm && _ubicacionGeoNegocio == null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: Text(
+                            'Activa el GPS del local para usar el cobro por km.',
+                            style: TextStyle(color: Colors.red.shade700, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.purple.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.purple.shade100),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.account_balance_wallet, color: Colors.purple),
+                          SizedBox(width: 8),
+                          Text(
+                            'Métodos de pago que aceptas',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: Colors.purple),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'El cliente solo podrá elegir entre los que marques. En efectivo se le pedirá con cuánto pagará para llevar su cambio.',
+                        style: TextStyle(color: Colors.black87, fontSize: 13),
+                      ),
+                      const SizedBox(height: 12),
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: _opcionesPago.map((m) {
+                          final activo = _metodosPago.contains(m);
+                          return FilterChip(
+                            avatar: Icon(
+                              _iconoPago(m),
+                              size: 18,
+                              color: activo ? Colors.white : Colors.blueGrey,
+                            ),
+                            label: Text(_etiquetaPago(m)),
+                            labelStyle: TextStyle(
+                              color: activo ? Colors.white : Colors.black87,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            selected: activo,
+                            selectedColor: Colors.purple,
+                            backgroundColor: Colors.white,
+                            checkmarkColor: Colors.white,
+                            onSelected: (sel) => setState(() {
+                              if (sel) {
+                                _metodosPago.add(m);
+                              } else {
+                                _metodosPago.remove(m);
+                              }
+                            }),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 20),
+                SwitchListTile(
+                  title: const Text('Permitir "Recoger en el Local"', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text('El cliente podrá ir a buscar su comida sin pagar envío.'),
+                  value: _permiteRecoger,
+                  activeThumbColor: Colors.blueAccent,
+                  onChanged: (val) => setState(() => _permiteRecoger = val),
+                ),
+                const SizedBox(height: 20),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.save),
+                  label: const Text('Guardar configuración', style: TextStyle(fontSize: 16)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blueAccent,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                  ),
+                  onPressed: _guardarConfiguracion,
+                ),
+              ],
+            ),
     );
   }
 }

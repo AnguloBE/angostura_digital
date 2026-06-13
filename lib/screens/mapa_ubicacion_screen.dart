@@ -1,15 +1,17 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
-import 'package:http/http.dart' as http;
 import 'package:angostura_digital/globals.dart' as globals;
+import 'package:angostura_digital/utils/entrega_ubicacion_tracker.dart';
+import 'package:angostura_digital/widgets/mapa_entrega_satelite.dart';
 
 class MapaUbicacionScreen extends StatefulWidget {
-  final bool soloCoordenadas; 
+  final bool soloCoordenadas;
+  final LatLng? posicionInicial;
 
   const MapaUbicacionScreen({
-    super.key, 
-    this.soloCoordenadas = false, 
+    super.key,
+    this.soloCoordenadas = false,
+    this.posicionInicial,
   });
 
   @override
@@ -17,68 +19,64 @@ class MapaUbicacionScreen extends StatefulWidget {
 }
 
 class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
-  GoogleMapController? _mapController;
-  
-  static const LatLng _centroAngostura = LatLng(25.3636, -108.1611);
-  
-  LatLng? _posicionSeleccionada;
-  String _direccionTraducida = 'Toca el mapa para seleccionar tu ubicación';
-  bool _buscandoDireccion = false;
-  
-  final TextEditingController _referenciasCtrl = TextEditingController();
-  final String _googleApiKey = "AIzaSyB96gNYG1I92oeAA8H-_WvTAJNFMLKVtkA";
+  final EntregaUbicacionTracker _tracker = EntregaUbicacionTracker();
+  final GlobalKey<MapaEntregaSateliteState> _mapaKey = GlobalKey<MapaEntregaSateliteState>();
 
-  Future<void> _traducirCoordenadas(LatLng posicion) async {
-    setState(() {
-      _posicionSeleccionada = posicion;
-      _buscandoDireccion = true;
-    });
+  LatLng? _posicionInicialMapa;
+  bool _buscandoGps = true;
 
-    try {
-      final url = "https://maps.googleapis.com/maps/api/geocode/json?latlng=${posicion.latitude},${posicion.longitude}&key=$_googleApiKey&language=es";
-      final response = await http.get(Uri.parse(url));
-      
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        if (json['results'] != null && json['results'].isNotEmpty) {
-          setState(() {
-            _direccionTraducida = json['results'][0]['formatted_address'];
-          });
-        } else {
-          setState(() => _direccionTraducida = 'Ubicación seleccionada (sin calle registrada)');
-        }
-      }
-    } catch (e) {
-      setState(() => _direccionTraducida = 'Coordenadas: ${posicion.latitude.toStringAsFixed(4)}, ${posicion.longitude.toStringAsFixed(4)}');
-    }
-
-    setState(() => _buscandoDireccion = false);
+  @override
+  void initState() {
+    super.initState();
+    _posicionInicialMapa = widget.posicionInicial;
+    _irAMiUbicacion();
   }
 
-  void _confirmarUbicacion() {
-    if (_posicionSeleccionada == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Por favor, toca el mapa para poner el pin.'), backgroundColor: Colors.orange));
+  @override
+  void dispose() {
+    _tracker.dispose();
+    super.dispose();
+  }
+
+  Future<void> _irAMiUbicacion() async {
+    setState(() => _buscandoGps = true);
+    final gps = await _tracker.obtenerUbicacionPrecisa();
+    if (!mounted) return;
+
+  setState(() {
+      _buscandoGps = false;
+      if (gps != null) _posicionInicialMapa = gps;
+    });
+
+    if (gps != null) {
+      await _mapaKey.currentState?.centrarEn(gps);
+    }
+  }
+
+  Future<void> _confirmarUbicacion() async {
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    final centro = await _mapaKey.currentState?.leerCentroActual();
+    if (centro == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Mueve el mapa hasta marcar el punto correcto.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
       return;
     }
 
-    // Si es para el negocio, devolvemos puro GPS y nos saltamos las referencias
     if (widget.soloCoordenadas) {
-      Navigator.pop(context, _posicionSeleccionada);
+      if (!mounted) return;
+      Navigator.pop(context, centro);
       return;
     }
 
-    // Si es para el CLIENTE (Carrito):
-    if (_referenciasCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Las referencias son obligatorias para que el repartidor no se pierda.'), backgroundColor: Colors.orange));
-      return;
-    }
-
-    final direccionFinal = "$_direccionTraducida\n📍 Referencias: ${_referenciasCtrl.text.trim()}";
-    
-    // Devolvemos un Map con texto y coordenadas por separado
+    if (!mounted) return;
     Navigator.pop(context, {
-      'direccion': direccionFinal,
-      'coordenadas': _posicionSeleccionada,
+      'direccion': 'Punto de entrega confirmado en mapa',
+      'coordenadas': centro,
     });
   }
 
@@ -86,60 +84,90 @@ class _MapaUbicacionScreenState extends State<MapaUbicacionScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.soloCoordenadas ? '📍 Fijar Negocio' : '📍 Ubica tu entrega', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
+        title: Text(
+          widget.soloCoordenadas ? 'Ubicación del negocio' : 'Confirmar en mapa',
+          style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+        ),
         backgroundColor: globals.colorFondo,
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: Column(
         children: [
           Expanded(
-            child: GoogleMap(
-              // --- AQUÍ ESTÁ LA LÍNEA MÁGICA ---
-              mapType: MapType.hybrid, // Muestra foto de satélite + Nombres de calles
-              
-              initialCameraPosition: const CameraPosition(target: _centroAngostura, zoom: 16), // Subí un poquito el zoom a 16 para que vean las casas más de cerca al abrir
-              onMapCreated: (controller) => _mapController = controller,
-              onTap: _traducirCoordenadas,
-              markers: _posicionSeleccionada != null 
-                ? { Marker(markerId: const MarkerId('pin_entrega'), position: _posicionSeleccionada!) } 
-                : {},
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+              child: Stack(
+                children: [
+                  MapaEntregaSatelite(
+                    key: _mapaKey,
+                    expandir: true,
+                    posicionInicial: _posicionInicialMapa,
+                    onCentroCambiado: (_) {},
+                    onMapaListo: () {
+                      final pos = _posicionInicialMapa;
+                      if (pos != null) _mapaKey.currentState?.centrarEn(pos);
+                    },
+                  ),
+                  if (_buscandoGps)
+                    Container(
+                      color: Colors.black26,
+                      alignment: Alignment.center,
+                      child: const Card(
+                        child: Padding(
+                          padding: EdgeInsets.all(16),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CircularProgressIndicator(),
+                              SizedBox(width: 12),
+                              Text('Ubicándote...'),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: const BoxDecoration(color: Colors.white, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 10, offset: Offset(0, -5))], borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+          Padding(
+            padding: const EdgeInsets.all(16),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Ubicación Detectada:', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent)),
-                const SizedBox(height: 5),
-                if (_buscandoDireccion) 
-                  const LinearProgressIndicator() 
-                else 
-                  Text(_direccionTraducida, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-                
-                if (!widget.soloCoordenadas) ...[
-                  const Divider(height: 30),
-                  TextField(
-                    controller: _referenciasCtrl,
-                    decoration: InputDecoration(labelText: 'Referencias de la casa', hintText: 'Ej. Casa verde, frente al parque, rejas negras.', prefixIcon: const Icon(Icons.home), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)), filled: true, fillColor: Colors.grey.shade50),
-                    maxLines: 2,
-                    textCapitalization: TextCapitalization.sentences,
+                if (_tracker.sinPermiso || _tracker.ubicacionDesactivada)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      _tracker.direccionTexto,
+                      style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600),
+                    ),
                   ),
-                ],
-                
-                const SizedBox(height: 20),
+                OutlinedButton.icon(
+                  onPressed: _buscandoGps ? null : _irAMiUbicacion,
+                  icon: const Icon(Icons.my_location),
+                  label: const Text('Ir a mi ubicación actual'),
+                ),
+                const SizedBox(height: 12),
                 SizedBox(
-                  width: double.infinity, height: 50,
+                  height: 50,
                   child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blueAccent,
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
                     onPressed: _confirmarUbicacion,
-                    child: Text(widget.soloCoordenadas ? 'Fijar Coordenadas' : 'Confirmar Dirección', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    child: Text(
+                      widget.soloCoordenadas ? 'Guardar ubicación del local' : 'Usar este punto',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
                   ),
-                )
+                ),
               ],
             ),
-          )
+          ),
         ],
       ),
     );

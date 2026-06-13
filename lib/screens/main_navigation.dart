@@ -6,8 +6,6 @@ import 'package:angostura_digital/screens/carrito_screen.dart';
 import 'package:angostura_digital/screens/home_tab.dart'; 
 import 'package:angostura_digital/screens/explorar_tab.dart';
 import 'package:angostura_digital/screens/pedidos_tab.dart';
-import 'package:angostura_digital/screens/perfil_tab.dart';
-
 class MainNavigation extends StatefulWidget {
   final int initialIndex; // Agregamos esto
   
@@ -24,8 +22,7 @@ class _MainNavigationState extends State<MainNavigation> {
   @override
   void initState() {
     super.initState();
-    // Inicia en la pestaña que le pasemos
-    _currentIndex = widget.initialIndex; 
+    _currentIndex = widget.initialIndex;
   }
 
   final List<Widget> _pantallas = [

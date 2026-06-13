@@ -4,6 +4,13 @@ import 'package:angostura_digital/globals.dart' as globals;
 import 'package:provider/provider.dart';
 import 'package:angostura_digital/providers/cart_provider.dart';
 import 'package:angostura_digital/screens/menu_negocio_screen.dart';
+import 'package:angostura_digital/widgets/square_image.dart';
+import 'package:angostura_digital/utils/producto_pedido_utils.dart';
+import 'package:angostura_digital/services/negocio_ingrediente_service.dart';
+import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
+import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/tiempo_estimado_utils.dart';
+import 'package:angostura_digital/utils/comision_app_utils.dart';
 
 class ExplorarTab extends StatefulWidget {
   const ExplorarTab({super.key});
@@ -87,14 +94,28 @@ class _ExplorarTabState extends State<ExplorarTab> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        SingleChildScrollView(scrollDirection: Axis.horizontal, child: Row(children: [_chipCategoria('Restaurante / Comida', Icons.restaurant, Colors.orange), const SizedBox(width: 8), _chipCategoria('Abarrotes y Supermercados', Icons.store, Colors.green), const SizedBox(width: 8), _chipCategoria('Farmacias', Icons.medical_services, Colors.blue), const SizedBox(width: 8), _chipCategoria('Ropa y Accesorios', Icons.checkroom, Colors.pink)])),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              _chipCategoria(CategoriasNegocio.restaurante, Icons.restaurant, Colors.orange),
+              const SizedBox(width: 8),
+              _chipCategoria(CategoriasNegocio.productos, Icons.store, Colors.green),
+              const SizedBox(width: 8),
+              _chipCategoria(CategoriasNegocio.servicios, Icons.content_cut, Colors.deepPurple),
+            ],
+          ),
+        ),
         const SizedBox(height: 30), const Text('Negocios Populares', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)), const SizedBox(height: 15),
         
         StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance.collection('negocios').where('estado', isEqualTo: 'aprobado').limit(10).snapshots(),
+          stream: FirebaseFirestore.instance.collection('negocios').snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-            final negocios = snapshot.data!.docs;
+            final negocios = snapshot.data!.docs
+                .where((d) => ComisionAppUtils.visibleParaClientes((d.data() as Map)['estado']?.toString()))
+                .take(10)
+                .toList();
             if (negocios.isEmpty) return const Text('Próximamente más locales...', style: TextStyle(color: Colors.grey));
             return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 600), child: Column(children: negocios.map((doc) => _tarjetaNegocio(doc)).toList())));
           },
@@ -108,11 +129,13 @@ class _ExplorarTabState extends State<ExplorarTab> {
 
   Widget _buildStreamNegocios() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('negocios').where('estado', isEqualTo: 'aprobado').snapshots(),
+      stream: FirebaseFirestore.instance.collection('negocios').snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(strokeWidth: 2));
         final negocios = snapshot.data!.docs.where((doc) {
-          if (_categoriaSeleccionada.isNotEmpty) return doc['categoria'] == _categoriaSeleccionada;
+          final estado = (doc.data() as Map)['estado']?.toString();
+          if (!ComisionAppUtils.visibleParaClientes(estado)) return false;
+          if (_categoriaSeleccionada.isNotEmpty) return CategoriasNegocio.normalizar(doc['categoria']) == _categoriaSeleccionada;
           final nombre = (doc['nombre'] ?? '').toString().toLowerCase(); 
           // --- AQUÍ AÑADIMOS LA BÚSQUEDA POR UBICACIÓN ---
           final ubicacion = (doc.data() as Map<String, dynamic>).containsKey('ubicacion') ? (doc['ubicacion'] ?? '').toString().toLowerCase() : '';
@@ -129,7 +152,8 @@ class _ExplorarTabState extends State<ExplorarTab> {
     final data = doc.data() as Map<String, dynamic>;
     String? estadoCierre = _verificarHorario(data['horario'] as Map<String, dynamic>?);
     bool isAbierto = estadoCierre == null;
-    String ubicacion = data['ubicacion'] ?? ''; // Obtenemos la ubicación
+    String ubicacion = data['ubicacion'] ?? '';
+    final textoUltimoTiempo = textoUltimoTiempoNegocio(data, etiqueta: 'Último tiempo');
 
     return GestureDetector(
       onTap: () { Navigator.push(context, MaterialPageRoute(builder: (context) => MenuNegocioScreen(negocioId: doc.id, nombreNegocio: data['nombre'] ?? 'Local', fotoUrl: data['foto_url']))); },
@@ -140,7 +164,14 @@ class _ExplorarTabState extends State<ExplorarTab> {
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              ClipRRect(borderRadius: BorderRadius.circular(50), child: SizedBox(width: 70, height: 70, child: data['foto_url'] != null ? Image.network(data['foto_url'], fit: BoxFit.cover, color: !isAbierto ? Colors.black.withOpacity(0.5) : null, colorBlendMode: !isAbierto ? BlendMode.saturation : null) : Container(color: Colors.grey.shade300, child: const Icon(Icons.store, color: Colors.grey, size: 30)))),
+              SquareImage(
+                imageUrl: data['foto_url'],
+                size: 70,
+                borderRadius: BorderRadius.circular(50),
+                color: !isAbierto ? Colors.black.withOpacity(0.5) : null,
+                colorBlendMode: !isAbierto ? BlendMode.saturation : null,
+                placeholder: Container(color: Colors.grey.shade300, child: const Icon(Icons.store, color: Colors.grey, size: 30)),
+              ),
               const SizedBox(width: 16),
               Expanded(
                 child: Column(
@@ -163,9 +194,24 @@ class _ExplorarTabState extends State<ExplorarTab> {
                             ],
                           ),
                         if (!isAbierto) 
-                          Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.red.shade200)), child: Text(estadoCierre!.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.red, fontWeight: FontWeight.bold))),
+                          Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), decoration: BoxDecoration(color: Colors.red.shade50, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.red.shade200)), child: Text(estadoCierre.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.red, fontWeight: FontWeight.bold))),
                       ],
-                    )
+                    ),
+                    if (textoUltimoTiempo != null) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Icon(Icons.timer_outlined, size: 14, color: Colors.blue.shade700),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              textoUltimoTiempo,
+                              style: TextStyle(fontSize: 12, color: Colors.blue.shade800, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ]
                 )
               ),
@@ -183,7 +229,7 @@ class _ExplorarTabState extends State<ExplorarTab> {
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(strokeWidth: 2));
         final productos = snapshot.data!.docs.where((doc) {
-          if (_categoriaSeleccionada.isNotEmpty) return doc['categoria_negocio'] == _categoriaSeleccionada;
+          if (_categoriaSeleccionada.isNotEmpty) return CategoriasNegocio.normalizar(doc['categoria_negocio']) == _categoriaSeleccionada;
           final nombre = (doc['nombre'] ?? '').toString().toLowerCase(); final descripcion = (doc['descripcion'] ?? '').toString().toLowerCase();
           return nombre.contains(_searchQuery) || descripcion.contains(_searchQuery);
         }).toList();
@@ -209,15 +255,31 @@ class _ExplorarTabState extends State<ExplorarTab> {
 
   Widget _infoChip(String texto) { return Padding(padding: const EdgeInsets.only(bottom: 4.0), child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3), decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.grey.shade200)), child: Text(texto, style: const TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w500)))); }
 
+  Widget _badgeStock(String texto, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color),
+      ),
+      child: Text(texto, style: TextStyle(fontSize: 12, color: color, fontWeight: FontWeight.bold)),
+    );
+  }
+
   Widget _tarjetaProducto(QueryDocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     String negocioId = data['negocio_id'] ?? 'ID_DESCONOCIDO';
     List<Widget> extraWidgets = [];
     if (data['ingredientes'] != null && data['ingredientes'].toString().isNotEmpty) extraWidgets.add(_infoChip('Ingredientes: ${data['ingredientes']}'));
     if (data['peso_o_contenido'] != null && data['peso_o_contenido'].toString().isNotEmpty) extraWidgets.add(_infoChip('Cont: ${data['peso_o_contenido']}'));
-    if (data['codigo_barras'] != null && data['codigo_barras'].toString().isNotEmpty) extraWidgets.add(_infoChip('Cód: ${data['codigo_barras']}'));
     if (data['tallas_disponibles'] != null && data['tallas_disponibles'].toString().isNotEmpty) extraWidgets.add(_infoChip('Tallas: ${data['tallas_disponibles']}'));
     if (data['colores'] != null && data['colores'].toString().isNotEmpty) extraWidgets.add(_infoChip('Colores: ${data['colores']}'));
+
+    final controlaInventario = data['controla_inventario'] == true;
+    final stock = NegocioUbicacionService.stockTotal(data);
+    final agotado = controlaInventario && stock <= 0;
+    final pocas = controlaInventario && stock > 0 && stock <= 5;
 
     return Card(
       elevation: 3, shadowColor: Colors.black26, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), clipBehavior: Clip.antiAlias,
@@ -226,7 +288,10 @@ class _ExplorarTabState extends State<ExplorarTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min,
           children: [
-            AspectRatio(aspectRatio: 1, child: SizedBox(width: double.infinity, child: data['foto_url'] != null ? Image.network(data['foto_url'], fit: BoxFit.cover) : Container(color: Colors.grey.shade200, child: const Icon(Icons.fastfood, color: Colors.grey, size: 50)))),
+            SquareImage(
+              imageUrl: data['foto_url'],
+              placeholder: Container(color: Colors.grey.shade200, child: const Icon(Icons.fastfood, color: Colors.grey, size: 50)),
+            ),
             Padding(
               padding: const EdgeInsets.all(12.0),
               child: Column(
@@ -236,18 +301,34 @@ class _ExplorarTabState extends State<ExplorarTab> {
                   const SizedBox(height: 6), Text('\$${data['precio']}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 17)),
                   if (data['descripcion'] != null && data['descripcion'].toString().isNotEmpty) ...[const SizedBox(height: 6), Text(data['descripcion'], style: TextStyle(fontSize: 13, color: Colors.grey.shade800))],
                   if (extraWidgets.isNotEmpty) ...[const SizedBox(height: 8), Column(crossAxisAlignment: CrossAxisAlignment.start, children: extraWidgets)],
+                  if (agotado) ...[const SizedBox(height: 8), _badgeStock('Agotado', Colors.red)],
+                  if (pocas) ...[const SizedBox(height: 8), _badgeStock('¡Solo quedan $stock!', Colors.orange.shade800)],
                   const SizedBox(height: 12),
-                  Align(
-                    alignment: Alignment.bottomRight,
-                    child: GestureDetector(
-                      onTap: () {
-                        final cart = Provider.of<CartProvider>(context, listen: false);
-                        bool exito = cart.agregarProducto(negocioId, doc.id, data['nombre'] ?? '', (data['precio'] ?? 0).toDouble(), data['foto_url'] ?? '');
-                        if (exito) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${data['nombre']} agregado'), duration: const Duration(seconds: 1), backgroundColor: Colors.green));
-                      },
-                      child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.blueAccent, borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.add, color: Colors.white, size: 20)),
-                    ),
-                  )
+                  if (!agotado)
+                    Align(
+                      alignment: Alignment.bottomRight,
+                      child: GestureDetector(
+                        onTap: () {
+                          final cart = Provider.of<CartProvider>(context, listen: false);
+                          if (controlaInventario && cart.cantidadEnCarrito(doc.id) >= stock) {
+                            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Solo hay $stock disponible(s) de ${data['nombre']}.'), backgroundColor: Colors.orange));
+                            return;
+                          }
+                          bool exito = cart.agregarProducto(
+                            negocioId,
+                            doc.id,
+                            data['nombre'] ?? '',
+                            (data['precio'] ?? 0).toDouble(),
+                            data['foto_url'] ?? '',
+                            detalles: ProductoPedidoUtils.detallesDesdeFirestore(data),
+                            ingredientesBase: NegocioIngredienteService.listaIngredientes(data),
+                            stockDisponible: controlaInventario ? stock : null,
+                          );
+                          if (exito) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${data['nombre']} agregado'), duration: const Duration(seconds: 1), backgroundColor: Colors.green));
+                        },
+                        child: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.blueAccent, borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.add, color: Colors.white, size: 20)),
+                      ),
+                    )
                 ],
               ),
             ),

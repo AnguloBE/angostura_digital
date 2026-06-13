@@ -6,6 +6,8 @@ import 'package:angostura_digital/widgets/drawer.dart';
 
 import 'package:angostura_digital/screens/menu_negocio_screen.dart';
 import 'package:angostura_digital/providers/cart_provider.dart';
+import 'package:angostura_digital/widgets/square_image.dart';
+import 'package:angostura_digital/utils/producto_pedido_utils.dart';
 
 class HomeTab extends StatelessWidget {
   const HomeTab({super.key});
@@ -75,7 +77,15 @@ class HomeTab extends StatelessWidget {
                           final cart = Provider.of<CartProvider>(context, listen: false);
                           
                           // 2. Usamos tu función agregarProducto tal como está en el Provider
-                          bool agregadoConExito = cart.agregarProducto(idNegocio, idPromo, nombrePromo, precioPromo, fotoPromo);
+                          bool agregadoConExito = cart.agregarProducto(
+                            idNegocio,
+                            idPromo,
+                            nombrePromo,
+                            precioPromo,
+                            fotoPromo,
+                            detalles: ProductoPedidoUtils.detallesDesdePromocion(promo),
+                            esPromocion: true,
+                          );
 
                           if (agregadoConExito) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -95,7 +105,15 @@ class HomeTab extends StatelessWidget {
                                     style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white), 
                                     onPressed: () { 
                                       cart.limpiarCarrito(); 
-                                      cart.agregarProducto(idNegocio, idPromo, nombrePromo, precioPromo, fotoPromo); 
+                                      cart.agregarProducto(
+                                        idNegocio,
+                                        idPromo,
+                                        nombrePromo,
+                                        precioPromo,
+                                        fotoPromo,
+                                        detalles: ProductoPedidoUtils.detallesDesdePromocion(promo),
+                                        esPromocion: true,
+                                      ); 
                                       Navigator.pop(ctx); 
                                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Carrito vaciado. Oferta agregada.'), backgroundColor: Colors.green)); 
                                       Navigator.push(context, MaterialPageRoute(builder: (_) => MenuNegocioScreen(negocioId: idNegocio, nombreNegocio: nombreDelLocal)));
@@ -113,7 +131,13 @@ class HomeTab extends StatelessWidget {
                           children: [
                             Stack(
                               children: [
-                                SizedBox(height: 200, width: double.infinity, child: promo['foto_url'] != null ? Image.network(promo['foto_url'], fit: BoxFit.cover) : Container(color: Colors.grey.shade300, child: const Icon(Icons.image, size: 50, color: Colors.grey))),
+                                SquareImage(
+                                  imageUrl: promo['foto_url'],
+                                  placeholder: Container(
+                                    color: Colors.grey.shade300,
+                                    child: const Icon(Icons.image, size: 50, color: Colors.grey),
+                                  ),
+                                ),
                                 Positioned(top: 15, right: 15, child: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.redAccent, borderRadius: BorderRadius.circular(20), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)]), child: const Text('¡OFERTA!', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, letterSpacing: 1)))),
                               ],
                             ),

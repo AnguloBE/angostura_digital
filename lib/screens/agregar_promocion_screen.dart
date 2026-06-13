@@ -2,10 +2,10 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:image_cropper/image_cropper.dart'; 
-import 'package:flutter/foundation.dart' show kIsWeb; 
+import 'package:image_picker/image_picker.dart' show ImageSource;
+import 'package:angostura_digital/widgets/square_image.dart';
 import 'package:angostura_digital/globals.dart' as globals;
+import 'package:angostura_digital/utils/mobile_image_utils.dart';
 
 class AgregarPromocionScreen extends StatefulWidget {
   final String negocioId;
@@ -37,8 +37,7 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
   
   DateTime? _fechaFinal; // --- NUEVA VARIABLE PARA LA FECHA ---
   String? _fotoUrlExistente;
-  Uint8List? _imagenBytes; 
-  final ImagePicker _picker = ImagePicker();
+  Uint8List? _imagenBytes;
 
   @override
   void initState() {
@@ -56,28 +55,23 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
   }
 
   Future<void> _seleccionarYRecortarImagen(ImageSource source) async {
-    final XFile? seleccion = await _picker.pickImage(source: source, imageQuality: 70);
-    if (seleccion == null) return;
-
-    CroppedFile? croppedFile = await ImageCropper().cropImage(
-      sourcePath: seleccion.path,
-      aspectRatio: const CropAspectRatio(ratioX: 16, ratioY: 9), 
-      compressFormat: ImageCompressFormat.jpg, compressQuality: 50, maxWidth: 800, maxHeight: 800,
-      uiSettings: [
-        AndroidUiSettings(toolbarTitle: 'Recortar Promo', toolbarColor: Colors.blueAccent, toolbarWidgetColor: Colors.white, initAspectRatio: CropAspectRatioPreset.ratio16x9, lockAspectRatio: true),
-        IOSUiSettings(title: 'Recortar Promo', aspectRatioLockEnabled: true),
-        WebUiSettings(context: context, presentStyle: WebPresentStyle.dialog),
-      ],
+    final bytes = await MobileImageUtils.pickCropAndReadBytes(
+      context: context,
+      source: source,
+      cropTitle: 'Recortar promoción',
     );
-
-    if (croppedFile != null) {
-      final bytes = await croppedFile.readAsBytes();
-      setState(() { _imagenBytes = bytes; _fotoUrlExistente = null; });
-    }
+    if (bytes == null) return;
+    setState(() {
+      _imagenBytes = bytes;
+      _fotoUrlExistente = null;
+    });
   }
 
   void _mostrarOpcionesImagen() {
-    showModalBottomSheet(context: context, builder: (context) => SafeArea(child: Wrap(children: [ListTile(leading: const Icon(Icons.photo_library), title: const Text('Subir desde Galería'), onTap: () { Navigator.pop(context); _seleccionarYRecortarImagen(ImageSource.gallery); }), if (!kIsWeb) ListTile(leading: const Icon(Icons.camera_alt), title: const Text('Tomar Foto'), onTap: () { Navigator.pop(context); _seleccionarYRecortarImagen(ImageSource.camera); })])));
+    MobileImageUtils.showImageSourcePicker(
+      context,
+      onSelected: _seleccionarYRecortarImagen,
+    );
   }
 
   Future<void> _guardarPromocion() async {
@@ -145,13 +139,17 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
             children: [
               GestureDetector(
                 onTap: _mostrarOpcionesImagen,
-                child: Container(
-                  height: 200, decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade400)),
-                  child: _imagenBytes != null 
-                    ? ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.memory(_imagenBytes!, fit: BoxFit.cover))
-                    : _fotoUrlExistente != null
-                      ? ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.network(_fotoUrlExistente!, fit: BoxFit.cover))
-                      : const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.local_offer, size: 50, color: Colors.redAccent), SizedBox(height: 10), Text('Tocar para agregar foto', style: TextStyle(color: Colors.grey))])
+                child: SquarePhotoPicker(
+                  imageBytes: _imagenBytes,
+                  imageUrl: _fotoUrlExistente,
+                  emptyChild: const Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.local_offer, size: 50, color: Colors.redAccent),
+                      SizedBox(height: 10),
+                      Text('Tocar para agregar foto', style: TextStyle(color: Colors.grey)),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 20),

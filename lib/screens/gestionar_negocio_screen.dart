@@ -1,19 +1,33 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:image_cropper/image_cropper.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart'; 
-import 'package:flutter/foundation.dart' show kIsWeb; 
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:angostura_digital/globals.dart' as globals;
+import 'package:angostura_digital/utils/mobile_image_utils.dart';
+import 'package:angostura_digital/widgets/square_image.dart';
 
 // --- IMPORTACIONES DE TUS PANTALLAS ---
 import 'package:angostura_digital/screens/agregar_producto_screen.dart';
+import 'package:angostura_digital/screens/agregar_servicio_screen.dart';
 import 'package:angostura_digital/screens/pedidos_negocio_screen.dart';
+import 'package:angostura_digital/screens/menu_negocio_screen.dart';
+import 'package:angostura_digital/providers/cart_provider.dart';
+import 'package:provider/provider.dart';
+import 'package:angostura_digital/screens/historial_pedidos_negocio_screen.dart';
 import 'package:angostura_digital/screens/configurar_envios_screen.dart'; 
 import 'package:angostura_digital/screens/mapa_ubicacion_screen.dart';
-import 'package:angostura_digital/screens/agregar_promocion_screen.dart'; 
+import 'package:angostura_digital/screens/agregar_promocion_screen.dart';
+import 'package:angostura_digital/screens/equipo_negocio_screen.dart';
+import 'package:angostura_digital/screens/ingredientes_negocio_screen.dart';
+import 'package:angostura_digital/screens/ubicaciones_negocio_screen.dart';
+import 'package:angostura_digital/screens/horario_citas_negocio_screen.dart';
+import 'package:angostura_digital/services/negocio_ingrediente_service.dart';
+import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
+import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/comision_app_utils.dart';
+import 'package:angostura_digital/services/negocio_equipo_service.dart';
+import 'package:angostura_digital/services/notificaciones_service.dart';
 
 class GestionarNegocioScreen extends StatefulWidget {
   final String negocioId;
@@ -40,7 +54,6 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
   late TextEditingController _ubicacionCtrl; 
   GeoPoint? _ubicacionGeo; 
   bool _isLoading = false;
-  final ImagePicker _picker = ImagePicker();
   bool _datosCargados = false; 
 
   @override
@@ -48,49 +61,67 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     super.initState();
     _nombreCtrl = TextEditingController(text: widget.nombreActual);
     _ubicacionCtrl = TextEditingController();
+    NegocioEquipoService.migrarPropietarioLegacy(widget.negocioId);
+    NotificacionesService.refrescarToken();
   }
 
   // --- 1. FUNCIÓN PARA CAMBIAR EL LOGO ---
-  Future<void> _cambiarImagen() async {
-    if (widget.estadoActual == 'rechazado') return;
+  Future<void> _subirLogoDesdeFuente(ImageSource source) async {
     try {
-      final XFile? seleccion = await _picker.pickImage(source: ImageSource.gallery, imageQuality: 80);
-      if (seleccion != null) {
-        CroppedFile? imagenRecortada = await ImageCropper().cropImage(
-          sourcePath: seleccion.path, 
-          aspectRatio: const CropAspectRatio(ratioX: 1.0, ratioY: 1.0), // ARREGLO: 1.0 asegura que sea double
-          compressFormat: ImageCompressFormat.jpg, 
-          compressQuality: 50, 
-          maxWidth: 600, 
-          maxHeight: 600,
-          uiSettings: [
-            AndroidUiSettings(toolbarTitle: 'Recortar Logo', toolbarColor: Colors.blueAccent, toolbarWidgetColor: Colors.white, initAspectRatio: CropAspectRatioPreset.square, lockAspectRatio: true), 
-            IOSUiSettings(title: 'Recortar Logo', aspectRatioLockEnabled: true), 
-            WebUiSettings(context: context, presentStyle: WebPresentStyle.dialog) // ARREGLO: Soporte Web
-          ],
+      final bytes = await MobileImageUtils.pickCropAndReadBytes(
+        context: context,
+        source: source,
+        cropTitle: 'Recortar logo',
+        imageQuality: 80,
+      );
+      if (bytes == null) return;
+
+      setState(() => _isLoading = true);
+      final nombreArchivo =
+          '${widget.negocioId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final ref =
+          FirebaseStorage.instance.ref().child('negocios/$nombreArchivo');
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
+      final String urlSubida = await ref.getDownloadURL();
+
+      await FirebaseFirestore.instance
+          .collection('negocios')
+          .doc(widget.negocioId)
+          .update({'foto_url': urlSubida});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Logo actualizado exitosamente'),
+            backgroundColor: Colors.green,
+          ),
         );
-        if (imagenRecortada != null) {
-          setState(() => _isLoading = true);
-          final bytes = await imagenRecortada.readAsBytes();
-          final nombreArchivo = '${widget.negocioId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-          final ref = FirebaseStorage.instance.ref().child('negocios/$nombreArchivo');
-          await ref.putData(bytes, SettableMetadata(contentType: 'image/jpeg'));
-          final String urlSubida = await ref.getDownloadURL();
-          
-          await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update({'foto_url': urlSubida});
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Logo actualizado exitosamente'), backgroundColor: Colors.green));
-        }
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error al cambiar foto: $e'), backgroundColor: Colors.red));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al cambiar foto: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
+  void _cambiarImagen() {
+    MobileImageUtils.showImageSourcePicker(
+      context,
+      galleryLabel: 'Elegir logo de la galería',
+      cameraLabel: 'Tomar foto del logo',
+      onSelected: _subirLogoDesdeFuente,
+    );
+  }
+
   // --- 2. FUNCIÓN PARA GUARDAR DATOS PRINCIPALES ---
   Future<void> _guardarDatos() async {
-    if (_nombreCtrl.text.trim().isEmpty || widget.estadoActual == 'rechazado') return;
+    if (_nombreCtrl.text.trim().isEmpty) return;
     setState(() => _isLoading = true);
     
     Map<String, dynamic> datosAActualizar = {
@@ -109,17 +140,6 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error al guardar: $e'), backgroundColor: Colors.red));
     } finally {
       setState(() => _isLoading = false);
-    }
-  }
-
-  // --- 3. FUNCIONES DE ELIMINACIÓN ---
-  Future<void> _eliminarNegocio() async {
-    final confirmar = await showDialog<bool>(context: context, builder: (context) => AlertDialog(title: const Text('Eliminar Negocio'), content: const Text('¿Estás seguro? Se borrará el negocio y no aparecerá más en la app. Esta acción no se puede deshacer.'), actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')), ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Colors.red), onPressed: () => Navigator.pop(context, true), child: const Text('Eliminar'))]));
-    if (confirmar == true) {
-      await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).delete();
-      final productos = await FirebaseFirestore.instance.collection('productos').where('negocio_id', isEqualTo: widget.negocioId).get();
-      for (var doc in productos.docs) { await doc.reference.delete(); }
-      if (mounted) { Navigator.pop(context); ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Negocio eliminado'), backgroundColor: Colors.red)); }
     }
   }
 
@@ -194,17 +214,52 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
   // ==========================================
   @override
   Widget build(BuildContext context) {
-    final bool isRechazado = widget.estadoActual == 'rechazado';
-    final bool isPendiente = widget.estadoActual == 'pendiente';
-    final bool isAprobado = widget.estadoActual == 'aprobado';
+    final bool isPausado = ComisionAppUtils.esPausado(widget.estadoActual);
+    final bool isActivo = ComisionAppUtils.esActivo(widget.estadoActual);
 
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(title: const Text('Gestionar Negocio'), backgroundColor: globals.colorFondo, foregroundColor: Colors.white, actions: [IconButton(icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: _eliminarNegocio, tooltip: 'Eliminar negocio')]),
+      appBar: AppBar(
+        title: const Text('Gestionar Negocio'),
+        backgroundColor: globals.colorFondo,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.groups),
+            tooltip: 'Equipo y trabajadores',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => EquipoNegocioScreen(
+                    negocioId: widget.negocioId,
+                    nombreNegocio: widget.nombreActual,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       body: Column(
         children: [
-          // BANDA SUPERIOR DE ESTADO
-          Container(width: double.infinity, padding: const EdgeInsets.all(12), color: isRechazado ? Colors.red.shade100 : (isPendiente ? Colors.orange.shade100 : Colors.green.shade100), child: Text(isRechazado ? '🚨 RECHAZADO: No puedes hacer modificaciones.' : (isPendiente ? '⏳ EN REVISIÓN: No puedes agregar productos aún.' : '✅ APROBADO: Tu negocio es visible.'), textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, color: isRechazado ? Colors.red.shade800 : (isPendiente ? Colors.orange.shade800 : Colors.green.shade800)))),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            color: isPausado ? Colors.deepPurple.shade100 : Colors.green.shade100,
+            child: Text(
+              isPausado
+                  ? '⏸ PAUSADO: Los clientes no ven tu negocio. Regulariza el pago de la app.'
+                  : (isActivo
+                      ? '✅ ACTIVO: Tu negocio es visible para clientes.'
+                      : 'Estado del negocio en actualización.'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: isPausado ? Colors.deepPurple.shade800 : Colors.green.shade800,
+              ),
+            ),
+          ),
           
           Expanded(
             child: SingleChildScrollView(
@@ -213,17 +268,290 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   
-                  // --- BOTONES DE ACCIÓN RÁPIDA (Solo si está aprobado) ---
-                  if (isAprobado) ...[
-                    Row(children: [
-                      Expanded(child: ElevatedButton.icon(icon: const Icon(Icons.receipt_long, size: 20), label: const Text('Pedidos', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)), style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => PedidosNegocioScreen(negocioId: widget.negocioId, nombreNegocio: widget.nombreActual))); })), 
-                      const SizedBox(width: 8), 
-                      Expanded(child: ElevatedButton.icon(icon: const Icon(Icons.local_shipping, size: 20), label: const Text('Envíos', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)), style: ElevatedButton.styleFrom(backgroundColor: Colors.teal, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => ConfigurarEnviosScreen(negocioId: widget.negocioId))); })),
-                      const SizedBox(width: 8), 
-                      Expanded(child: ElevatedButton.icon(icon: const Icon(Icons.campaign, size: 20), label: const Text('Promo', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)), style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (_) => AgregarPromocionScreen(negocioId: widget.negocioId, nombreNegocio: widget.nombreActual))); }))
-                    ]),
+                  if (isActivo || isPausado) ...[
+                    if (CategoriasNegocio.esServicios(widget.categoria))
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.event_available, size: 20),
+                              label: const Text('Citas',
+                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.deepPurple,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => PedidosNegocioScreen(
+                                      negocioId: widget.negocioId,
+                                      nombreNegocio: widget.nombreActual,
+                                      puedeVerHistorial: true,
+                                      categoria: widget.categoria,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.campaign, size: 20),
+                              label: const Text('Promo',
+                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.redAccent,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => AgregarPromocionScreen(
+                                      negocioId: widget.negocioId,
+                                      nombreNegocio: widget.nombreActual,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      )
+                    else
+                      Column(
+                        children: [
+                          if (CategoriasNegocio.puedeVentaEnLocal(widget.categoria)) ...[
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                icon: Icon(
+                                  CategoriasNegocio.esProductos(widget.categoria)
+                                      ? Icons.point_of_sale
+                                      : Icons.add_shopping_cart,
+                                  size: 20,
+                                ),
+                                label: Text(
+                                  CategoriasNegocio.etiquetaVentaEnLocalLargo(widget.categoria),
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.indigo,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                ),
+                                onPressed: () {
+                                  context.read<CartProvider>().limpiarCarrito();
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => MenuNegocioScreen(
+                                        negocioId: widget.negocioId,
+                                        nombreNegocio: widget.nombreActual,
+                                        modoTrabajador: true,
+                                        categoriaNegocio: widget.categoria,
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                          ],
+                          Row(
+                        children: [
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.receipt_long, size: 20),
+                              label: const Text('Pedidos',
+                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blueAccent,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => PedidosNegocioScreen(
+                                      negocioId: widget.negocioId,
+                                      nombreNegocio: widget.nombreActual,
+                                      puedeVerHistorial: true,
+                                      categoria: widget.categoria,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.local_shipping, size: 20),
+                              label: const Text('Envíos',
+                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.teal,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        ConfigurarEnviosScreen(negocioId: widget.negocioId),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              icon: const Icon(Icons.campaign, size: 20),
+                              label: const Text('Promo',
+                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.redAccent,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              ),
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => AgregarPromocionScreen(
+                                      negocioId: widget.negocioId,
+                                      nombreNegocio: widget.nombreActual,
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                        ],
+                      ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.analytics_outlined),
+                        label: const Text('Historial y ventas', style: TextStyle(fontWeight: FontWeight.bold)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.indigo,
+                          side: const BorderSide(color: Colors.indigo),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => HistorialPedidosNegocioScreen(
+                                negocioId: widget.negocioId,
+                                nombreNegocio: widget.nombreActual,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    if (NegocioIngredienteService.usaIngredientes(widget.categoria))
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.restaurant_menu),
+                          label: const Text('Mis ingredientes', style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.green.shade800,
+                            side: BorderSide(color: Colors.green.shade700),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => IngredientesNegocioScreen(
+                                  negocioId: widget.negocioId,
+                                  nombreNegocio: widget.nombreActual,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    if (CategoriasNegocio.esServicios(widget.categoria))
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.event_available),
+                          label: const Text(
+                            'Horario para citas',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.deepPurple,
+                            side: const BorderSide(color: Colors.deepPurple),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => HorarioCitasNegocioScreen(
+                                  negocioId: widget.negocioId,
+                                  nombreNegocio: widget.nombreActual,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    if (CategoriasNegocio.esProductos(widget.categoria))
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          icon: const Icon(Icons.shelves),
+                          label: const Text('Ubicaciones / Repisas', style: TextStyle(fontWeight: FontWeight.bold)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.indigo,
+                            side: const BorderSide(color: Colors.indigo),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => UbicacionesNegocioScreen(
+                                  negocioId: widget.negocioId,
+                                  nombreNegocio: widget.nombreActual,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
                     const SizedBox(height: 15),
-                    
+
                     StreamBuilder<DocumentSnapshot>(
                       stream: FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).snapshots(),
                       builder: (context, snapshot) {
@@ -248,15 +576,36 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                         children: [
                           Row(
                             children: [
-                              GestureDetector(onTap: isRechazado ? null : _cambiarImagen, child: Stack(alignment: Alignment.bottomRight, children: [CircleAvatar(radius: 40, backgroundColor: Colors.grey.shade300, backgroundImage: logoUrl != null ? NetworkImage(logoUrl) : null, child: logoUrl == null ? const Icon(Icons.store, size: 40, color: Colors.grey) : null), if (!isRechazado) const CircleAvatar(radius: 14, backgroundColor: Colors.blueAccent, child: Icon(Icons.camera_alt, size: 16, color: Colors.white))])),
+                              GestureDetector(
+                                onTap: _cambiarImagen,
+                                child: Stack(
+                                  alignment: Alignment.bottomRight,
+                                  children: [
+                                    SquareImage(
+                                      imageUrl: logoUrl,
+                                      size: 80,
+                                      borderRadius: BorderRadius.circular(12),
+                                      placeholder: Container(
+                                        color: Colors.grey.shade300,
+                                        child: const Icon(Icons.store, size: 40, color: Colors.grey),
+                                      ),
+                                    ),
+                                    const CircleAvatar(
+                                        radius: 14,
+                                        backgroundColor: Colors.blueAccent,
+                                        child: Icon(Icons.camera_alt, size: 16, color: Colors.white),
+                                      ),
+                                  ],
+                                ),
+                              ),
                               const SizedBox(width: 16),
                               Expanded(
                                 child: Column(
                                   children: [
-                                    TextField(controller: _nombreCtrl, enabled: !isRechazado, decoration: const InputDecoration(labelText: 'Nombre del Negocio', border: OutlineInputBorder(), isDense: true)),
+                                    TextField(controller: _nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre del Negocio', border: OutlineInputBorder(), isDense: true)),
                                     const SizedBox(height: 10),
                                     TextField(
-                                      controller: _ubicacionCtrl, enabled: !isRechazado, 
+                                      controller: _ubicacionCtrl,
                                       decoration: InputDecoration(
                                         labelText: 'Ubicación (Ej. Centro...)', border: OutlineInputBorder(borderSide: BorderSide(color: _ubicacionGeo != null ? Colors.green : Colors.grey)), isDense: true, prefixIcon: const Icon(Icons.location_on, size: 18),
                                         suffixIcon: IconButton(
@@ -282,9 +631,21 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                                               }
 
                                               // ARREGLO DEL ERROR DOUBLE?: Validamos que no sean nulos y usamos !
-                                              if (lat != null && lng != null) { 
-                                                setState(() => _ubicacionGeo = GeoPoint(lat!, lng!)); 
-                                                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Ubicación atrapada. No olvides pulsar el botón "Guardar Datos"'), backgroundColor: Colors.green));
+                                              if (lat != null && lng != null) {
+                                                final geo = GeoPoint(lat, lng);
+                                                setState(() => _ubicacionGeo = geo);
+                                                await FirebaseFirestore.instance
+                                                    .collection('negocios')
+                                                    .doc(widget.negocioId)
+                                                    .update({'ubicacion_geo': geo});
+                                                if (context.mounted) {
+                                                  ScaffoldMessenger.of(context).showSnackBar(
+                                                    const SnackBar(
+                                                      content: Text('Ubicación GPS guardada.'),
+                                                      backgroundColor: Colors.green,
+                                                    ),
+                                                  );
+                                                }
                                               } else {
                                                 if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('⚠️ El mapa devolvió un formato irreconocible.'), backgroundColor: Colors.red));
                                               }
@@ -300,7 +661,7 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                           ),
                           if (_ubicacionGeo != null) const Padding(padding: EdgeInsets.only(top: 8), child: Align(alignment: Alignment.centerRight, child: Text('✓ Coordenadas fijadas en el mapa', style: TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.bold)))),
                           const SizedBox(height: 15),
-                          if (!isRechazado) SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: _isLoading ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save), label: const Text('Guardar Datos'), style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white), onPressed: _guardarDatos))
+                          SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: _isLoading ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save), label: const Text('Guardar Datos'), style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white), onPressed: _guardarDatos))
                         ],
                       );
                     }
@@ -309,7 +670,7 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                   const SizedBox(height: 20), const Divider(),
 
                   // --- PROMOCIONES ACTIVAS ---
-                  if (isAprobado) ...[
+                  if (isActivo || isPausado) ...[
                     const Row(children: [Icon(Icons.campaign, color: Colors.redAccent), SizedBox(width: 8), Text('Mis Promociones Activas', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.redAccent))]),
                     const SizedBox(height: 10),
                     StreamBuilder<QuerySnapshot>(
@@ -332,7 +693,12 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                                 decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.red.shade200), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4)]),
                                 child: Row(
                                   children: [
-                                    ClipRRect(borderRadius: const BorderRadius.horizontal(left: Radius.circular(11)), child: promo['foto_url'] != null ? Image.network(promo['foto_url'], width: 80, height: double.infinity, fit: BoxFit.cover) : Container(width: 80, color: Colors.grey.shade200, child: const Icon(Icons.image))),
+                                    SquareImage(
+                                      imageUrl: promo['foto_url'],
+                                      size: 80,
+                                      borderRadius: const BorderRadius.horizontal(left: Radius.circular(11)),
+                                      placeholder: Container(color: Colors.grey.shade200, child: const Icon(Icons.image)),
+                                    ),
                                     Expanded(
                                       child: Padding(
                                         padding: const EdgeInsets.all(8.0),
@@ -365,16 +731,76 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                     const SizedBox(height: 20), const Divider(),
                   ],
 
-                  // --- CATÁLOGO DE PRODUCTOS NORMALES ---
-                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Catálogo / Productos', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)), if (isAprobado) ElevatedButton.icon(style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white), icon: const Icon(Icons.add, size: 18), label: const Text('Agregar'), onPressed: () { Navigator.push(context, MaterialPageRoute(builder: (context) => AgregarProductoScreen(negocioId: widget.negocioId, categoriaNegocio: widget.categoria))); })]),
+                  // --- CATÁLOGO ---
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        CategoriasNegocio.esServicios(widget.categoria)
+                            ? 'Mis servicios'
+                            : 'Catálogo / Productos',
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      ),
+                      ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: CategoriasNegocio.esServicios(widget.categoria)
+                              ? Colors.deepPurple
+                              : Colors.blueAccent,
+                          foregroundColor: Colors.white,
+                        ),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Agregar'),
+                        onPressed: () {
+                          if (CategoriasNegocio.esServicios(widget.categoria)) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => AgregarServicioScreen(
+                                  negocioId: widget.negocioId,
+                                ),
+                              ),
+                            );
+                          } else {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => AgregarProductoScreen(
+                                  negocioId: widget.negocioId,
+                                  categoriaNegocio: widget.categoria,
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ],
+                  ),
                   const SizedBox(height: 15),
 
                   StreamBuilder<QuerySnapshot>(
                     stream: FirebaseFirestore.instance.collection('productos').where('negocio_id', isEqualTo: widget.negocioId).snapshots(),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-                      final productos = snapshot.data?.docs ?? [];
-                      if (productos.isEmpty) return const Padding(padding: EdgeInsets.all(20.0), child: Center(child: Text('No hay productos registrados aún.', style: TextStyle(color: Colors.grey))));
+                      final todos = snapshot.data?.docs ?? [];
+                      final esServ = CategoriasNegocio.esServicios(widget.categoria);
+                      final productos = todos.where((doc) {
+                        final p = doc.data() as Map<String, dynamic>;
+                        final itemServ = p['es_servicio'] == true;
+                        return esServ ? itemServ : !itemServ;
+                      }).toList();
+                      if (productos.isEmpty) {
+                        return Padding(
+                          padding: const EdgeInsets.all(20.0),
+                          child: Center(
+                            child: Text(
+                              esServ
+                                  ? 'No hay servicios registrados aún.'
+                                  : 'No hay productos registrados aún.',
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                          ),
+                        );
+                      }
                       
                       return Center(
                         child: LayoutBuilder(
@@ -388,8 +814,21 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                               children: productos.map((doc) {
                                 final prod = doc.data() as Map<String, dynamic>;
                                 List<Widget> extraWidgets = [];
-                                if (prod['ingredientes'] != null && prod['ingredientes'].toString().isNotEmpty) extraWidgets.add(_infoChip('Ingredientes: ${prod['ingredientes']}'));
+                                if (prod['es_servicio'] == true) {
+                                  final ts = prod['tipo_servicio']?.toString() ?? 'cita';
+                                  extraWidgets.add(_infoChip(
+                                    ts == 'cita' ? 'Con cita' : 'Solicitud a domicilio',
+                                  ));
+                                } else {
+                                final textoIngredientes = NegocioIngredienteService.textoIngredientes(prod);
+                                if (textoIngredientes != null) extraWidgets.add(_infoChip('Ingredientes: $textoIngredientes'));
                                 if (prod['peso_o_contenido'] != null && prod['peso_o_contenido'].toString().isNotEmpty) extraWidgets.add(_infoChip('Cont: ${prod['peso_o_contenido']}'));
+                                }
+                                if (CategoriasNegocio.esProductos(widget.categoria)) {
+                                  extraWidgets.add(_infoChip('Stock: ${NegocioUbicacionService.stockTotal(prod)} pza(s)'));
+                                  final ubic = NegocioUbicacionService.textoUbicaciones(prod);
+                                  if (ubic != null) extraWidgets.add(_infoChip('Ubicación: $ubic'));
+                                }
 
                                 return SizedBox(
                                   width: itemWidth > 0 ? itemWidth : 150,
@@ -398,7 +837,10 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, 
                                       children: [
-                                        AspectRatio(aspectRatio: 1, child: SizedBox(width: double.infinity, child: prod['foto_url'] != null ? Image.network(prod['foto_url'], fit: BoxFit.cover) : Container(color: Colors.grey.shade200, child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 50)))),
+                                        SquareImage(
+                                          imageUrl: prod['foto_url'],
+                                          placeholder: Container(color: Colors.grey.shade200, child: const Icon(Icons.image_not_supported, color: Colors.grey, size: 50)),
+                                        ),
                                         Padding(
                                           padding: const EdgeInsets.all(12.0),
                                           child: Column(
@@ -411,12 +853,37 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                                               
                                               const SizedBox(height: 12),
                                               // --- ARREGLO: BOTONES DE EDITAR Y BORRAR PRODUCTO ---
-                                              if (!isRechazado)
+                                              if (isActivo || isPausado)
                                                 Row(
                                                   mainAxisAlignment: MainAxisAlignment.end,
                                                   children: [
                                                     GestureDetector(
-                                                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AgregarProductoScreen(negocioId: widget.negocioId, categoriaNegocio: widget.categoria, productoId: doc.id, productoData: prod))),
+                                                      onTap: () {
+                                                        if (prod['es_servicio'] == true) {
+                                                          Navigator.push(
+                                                            context,
+                                                            MaterialPageRoute(
+                                                              builder: (_) => AgregarServicioScreen(
+                                                                negocioId: widget.negocioId,
+                                                                servicioId: doc.id,
+                                                                servicioData: prod,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        } else {
+                                                          Navigator.push(
+                                                            context,
+                                                            MaterialPageRoute(
+                                                              builder: (_) => AgregarProductoScreen(
+                                                                negocioId: widget.negocioId,
+                                                                categoriaNegocio: widget.categoria,
+                                                                productoId: doc.id,
+                                                                productoData: prod,
+                                                              ),
+                                                            ),
+                                                          );
+                                                        }
+                                                      },
                                                       child: Container(
                                                         padding: const EdgeInsets.all(8), 
                                                         margin: const EdgeInsets.only(right: 8),

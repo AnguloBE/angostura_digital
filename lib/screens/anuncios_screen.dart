@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cached_network_image/cached_network_image.dart'; // Para carga rápida
 import 'package:angostura_digital/widgets/drawer.dart';
+import 'package:angostura_digital/widgets/square_image.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 
 class AnunciosScreen extends StatefulWidget {
@@ -88,24 +88,15 @@ class WidgetProductoCard extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), // Bordes redondeados modernos
       clipBehavior: Clip.antiAlias, // Para que la imagen no se salga de los bordes redondeados
       child: InkWell(
-        onTap: () {
-          // Aquí abrirás el detalle del producto en el futuro
-          print("Tocado: $nombre");
-        },
+        onTap: () {},
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 1. LA IMAGEN (Highlight / Protagonista)
-            AspectRatio(
-              aspectRatio: 1, // HACEMOS QUE EL ÁREA DE LA FOTO SEA UN CUADRADO PERFECTO
-              child: fotoUrl != null
-                  ? CachedNetworkImage(
-                      imageUrl: fotoUrl,
-                      fit: BoxFit.cover, // La imagen cuadrada recortada llenará este espacio perfectamente
-                      placeholder: (context, url) => Container(color: Colors.grey.shade200, child: const Center(child: CircularProgressIndicator(strokeWidth: 2))),
-                      errorWidget: (context, url, error) => const Icon(Icons.broken_image, size: 50, color: Colors.grey),
-                    )
-                  : Container(color: Colors.grey.shade200, child: const Icon(Icons.image, size: 50, color: Colors.grey)),
+            SquareImage(
+              imageUrl: fotoUrl,
+              useCachedNetwork: true,
+              placeholder: Container(color: Colors.grey.shade200, child: const Icon(Icons.image, size: 50, color: Colors.grey)),
             ),
             
             // 2. DETALLES (Abajo)
@@ -152,11 +143,8 @@ class WidgetProductoCard extends StatelessWidget {
   }
 
   IconData _getIconoCategoria(String? categoria) {
-    switch (categoria) {
-      case 'Restaurante / Comida': return Icons.fastfood;
-      case 'Ropa y Accesorios': return Icons.checkroom;
-      case 'Abarrotes y Supermercados': return Icons.local_grocery_store;
-      default: return Icons.shutter_speed;
-    }
+    if (categoria == 'Restaurante / Comida') return Icons.fastfood;
+    if (categoria == 'Servicios') return Icons.content_cut;
+    return Icons.store;
   }
 }

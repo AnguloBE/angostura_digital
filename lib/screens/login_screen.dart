@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:angostura_digital/services/firebase_service.dart'; // Tu ruta al AuthService
-import 'package:firebase_auth_platform_interface/firebase_auth_platform_interface.dart';
+import 'package:angostura_digital/services/firebase_service.dart';
+import 'package:angostura_digital/utils/auth_plataforma.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -11,168 +10,126 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final TextEditingController _phoneController = TextEditingController();
-  final TextEditingController _codeController = TextEditingController();
   bool _isLoading = false;
-  bool _codeSent = false;
-  RecaptchaVerifier? _verifier;
 
-  // Variable para guardar el código de país seleccionado (por defecto México)
-  String _selectedCountryCode = '+52';
-
-  // Lista de códigos de país (puedes agregar más si en el futuro se ocupa)
-  final List<Map<String, String>> _countryCodes = [
-    {'code': '+52', 'name': '🇲🇽 +52'},
-    {'code': '+1', 'name': '🇺🇸 +1'},
-  ];
-
-  @override
-  void initState() {
-    super.initState();
-    // Al no poner 'container', 'size' ni 'theme', Firebase lo hace INVISIBLE por defecto.
-    _verifier = RecaptchaVerifier(
-      auth: FirebaseAuthPlatform.instance, 
-    );
-  }
-
-  void _sendSms() async {
-    if (_phoneController.text.isEmpty) return;
+  Future<void> _iniciarSesion() async {
     setState(() => _isLoading = true);
-    
-    // Concatenamos el código de país con el número ingresado
-    final String fullPhoneNumber = '$_selectedCountryCode${_phoneController.text.trim()}';
-    
-    final success = await AuthService().sendCode(fullPhoneNumber, _verifier!);
-    
-    setState(() {
-      _isLoading = false;
-      if (success) {
-        _codeSent = true;
-        _showSuccess('SMS enviado con éxito a $fullPhoneNumber');
-      } else {
-        _showError('Error al enviar SMS. Verifica el número.');
+    try {
+      final cred = await AuthService().signInSegunPlataforma();
+      if (!mounted) return;
+      if (cred == null) {
+        // Usuario canceló
+        return;
       }
-    });
-  }
-
-  void _verifySms() async {
-    if (_codeController.text.isEmpty) return;
-    setState(() => _isLoading = true);
-    
-    final user = await AuthService().verifyCode(_codeController.text);
-    
-    setState(() => _isLoading = false);
-    if (user == null) {
-      _showError('Código incorrecto');
+    } catch (e) {
+      if (mounted) {
+        _mostrarError('No se pudo iniciar sesión. Intenta de nuevo.');
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _showError(String msg) {
+  void _mostrarError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), backgroundColor: Colors.red),
     );
   }
 
-  void _showSuccess(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.green),
+  @override
+  Widget build(BuildContext context) {
+    final esApple = AuthPlataforma.usaApple;
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              children: [
+                Icon(
+                  esApple ? Icons.apple : Icons.android,
+                  size: 72,
+                  color: esApple ? Colors.black : Colors.green.shade700,
+                ),
+                const SizedBox(height: 16),
+                const Icon(Icons.campaign_rounded, size: 56, color: Colors.blueAccent),
+                const SizedBox(height: 12),
+                const Text(
+                  'Angostura Digital',
+                  style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  esApple
+                      ? 'Inicia sesión con tu cuenta de Apple.\nDespués podrás agregar tu teléfono en el menú.'
+                      : 'Inicia sesión con tu cuenta de Google.\nDespués podrás agregar tu teléfono en el menú.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Colors.grey.shade700, height: 1.4),
+                ),
+                const SizedBox(height: 40),
+                if (_isLoading)
+                  const CircularProgressIndicator()
+                else if (esApple)
+                  SignInWithAppleStyleButton(onPressed: _iniciarSesion)
+                else
+                  GoogleSignInButton(onPressed: _iniciarSesion),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
+}
+
+class GoogleSignInButton extends StatelessWidget {
+  const GoogleSignInButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: Center(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              const Icon(Icons.campaign_rounded, size: 80, color: Colors.blueAccent),
-              const Text('Angostura Digital', 
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 30),
-              
-              // Fila para el Dropdown del país y el TextField del teléfono
-              // Fila para el Dropdown del país y el TextField del teléfono
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 120, // Ancho fijo para que no se coma el espacio del teléfono
-                    child: DropdownButtonFormField<String>(
-                      value: _selectedCountryCode,
-                      decoration: const InputDecoration(
-                        labelText: 'Lada', // Le ponemos label para que la altura superior cuadre perfecto
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 16),
-                      ),
-                      items: _countryCodes.map((country) {
-                        return DropdownMenuItem<String>(
-                          value: country['code'],
-                          child: Text(country['name']!, style: const TextStyle(fontSize: 16)),
-                        );
-                      }).toList(),
-                      onChanged: _codeSent ? null : (value) {
-                        setState(() {
-                          _selectedCountryCode = value!;
-                        });
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      controller: _phoneController,
-                      enabled: !_codeSent,
-                      decoration: const InputDecoration(
-                        labelText: 'Número a 10 dígitos',
-                        border: OutlineInputBorder(),
-                        counterText: '', // ESTO oculta el contador y alinea el borde inferior
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-                      ),
-                      keyboardType: TextInputType.phone,
-                      maxLength: 10,
-                    ),
-                  ),
-                ],
-              ),
-
-              if (_codeSent) ...[
-                const SizedBox(height: 15),
-                TextField(
-                  controller: _codeController,
-                  decoration: const InputDecoration(
-                    labelText: 'Código de 6 dígitos',
-                    border: OutlineInputBorder(),
-                  ),
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
-                ),
-              ],
-
-              const SizedBox(height: 25),
-
-              if (_isLoading)
-                const CircularProgressIndicator()
-              else
-                Column(
-                  children: [
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 50),
-                        backgroundColor: Colors.blueAccent,
-                        foregroundColor: Colors.white,
-                      ),
-                      onPressed: _codeSent ? _verifySms : _sendSms,
-                      child: Text(_codeSent ? 'Verificar Código' : 'Enviar SMS'),
-                    ),
-                  ],
-                ),
-              const SizedBox(height: 50), 
-            ],
-          ),
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          side: BorderSide(color: Colors.grey.shade400),
         ),
+        icon: const Icon(Icons.g_mobiledata, size: 28, color: Colors.blue),
+        label: const Text(
+          'Continuar con Google',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.black87),
+        ),
+        onPressed: onPressed,
+      ),
+    );
+  }
+}
+
+class SignInWithAppleStyleButton extends StatelessWidget {
+  const SignInWithAppleStyleButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.black,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+        ),
+        icon: const Icon(Icons.apple, size: 26),
+        label: const Text(
+          'Continuar con Apple',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        onPressed: onPressed,
       ),
     );
   }
