@@ -12,6 +12,7 @@ import 'package:angostura_digital/screens/ingredientes_negocio_screen.dart';
 import 'package:angostura_digital/screens/ubicaciones_negocio_screen.dart';
 import 'package:angostura_digital/screens/escaner_codigo_screen.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/widgets/agregar_stock_producto_dialog.dart';
 
 class AgregarProductoScreen extends StatefulWidget {
   final String negocioId;
@@ -48,6 +49,9 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
 
   // Ingredientes seleccionados del catálogo del negocio para este platillo.
   final Set<String> _ingredientesSeleccionados = {};
+  List<NegocioIngrediente> _catalogoIngredientes = [];
+  bool _cargandoIngredientes = true;
+  final ScrollController _scrollCtrl = ScrollController();
 
   // Inventario por ubicación (solo negocios de productos).
   List<NegocioUbicacion> _catalogoUbicaciones = [];
@@ -55,12 +59,15 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
 
   // Si el producto no tiene código de barras (no se pide ni se exige).
   bool _sinCodigo = false;
+  bool _destacado = false;
 
   bool get _usaIngredientes =>
       NegocioIngredienteService.usaIngredientes(widget.categoriaNegocio);
 
+  bool get _esBodega => CategoriasNegocio.esBodega(widget.categoriaNegocio);
+
   bool get _esProductos =>
-      CategoriasNegocio.esProductos(widget.categoriaNegocio) &&
+      CategoriasNegocio.usaInventario(widget.categoriaNegocio) &&
       !_usaIngredientes;
 
   int get _stockTotal => _filasInventario.fold(
@@ -79,6 +86,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     _codigoBarrasCtrl = TextEditingController(text: widget.productoData?['codigo_barras'] ?? '');
     _gramosCtrl = TextEditingController(text: widget.productoData?['peso_o_contenido'] ?? '');
     _fotoUrlExistente = widget.productoData?['foto_url'];
+    _destacado = widget.productoData?['destacado'] == true;
 
     if (widget.productoData != null) {
       _ingredientesSeleccionados.addAll(
@@ -94,10 +102,36 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     }
 
     _cargarCatalogoUbicaciones();
+    if (_usaIngredientes) _cargarCatalogoIngredientes();
+  }
+
+  void _preservarScroll(VoidCallback actualizar) {
+    final offset = _scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0;
+    setState(actualizar);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollCtrl.hasClients) {
+        _scrollCtrl.jumpTo(offset.clamp(0.0, _scrollCtrl.position.maxScrollExtent));
+      }
+    });
+  }
+
+  Future<void> _cargarCatalogoIngredientes() async {
+    try {
+      final cat = await NegocioIngredienteService.obtener(widget.negocioId);
+      if (mounted) {
+        setState(() {
+          _catalogoIngredientes = cat;
+          _cargandoIngredientes = false;
+        });
+      }
+    } catch (_) {
+      if (mounted) setState(() => _cargandoIngredientes = false);
+    }
   }
 
   @override
   void dispose() {
+    _scrollCtrl.dispose();
     for (final f in _filasInventario) {
       f.cantidadCtrl.dispose();
     }
@@ -130,33 +164,74 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
 
   Future<void> _agregarIngredienteRapido() async {
     final nombreCtrl = TextEditingController();
-    final nuevo = await showDialog<String>(
+    final precioCtrl = TextEditingController();
+
+    final guardado = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Nuevo ingrediente'),
-        content: TextField(
-          controller: nombreCtrl,
-          autofocus: true,
-          textCapitalization: TextCapitalization.sentences,
-          decoration: const InputDecoration(
-            labelText: 'Nombre (ej. Tomate)',
-            border: OutlineInputBorder(),
-          ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nombreCtrl,
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                labelText: 'Nombre (ej. Tomate, Queso extra)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: precioCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'Costo extra (opcional)',
+                hintText: '0.00',
+                prefixText: '\$ ',
+                helperText: 'Si el cliente lo pide como extra. Déjalo vacío si es gratis.',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
           ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, nombreCtrl.text.trim()),
+            onPressed: () {
+              if (nombreCtrl.text.trim().isEmpty) return;
+              Navigator.pop(ctx, true);
+            },
             child: const Text('Agregar'),
           ),
         ],
       ),
     );
 
-    if (nuevo == null || nuevo.isEmpty) return;
+    if (guardado != true) return;
+
+    final nuevo = nombreCtrl.text.trim();
+    final precioExtra = double.tryParse(precioCtrl.text.trim()) ?? 0;
+    if (nuevo.isEmpty) return;
+
     try {
-      await NegocioIngredienteService.agregar(widget.negocioId, nuevo);
-      if (mounted) setState(() => _ingredientesSeleccionados.add(nuevo));
+      await NegocioIngredienteService.agregar(
+        widget.negocioId,
+        nuevo,
+        precioExtra: precioExtra,
+      );
+      if (mounted) {
+        _preservarScroll(() {
+          _ingredientesSeleccionados.add(nuevo);
+          if (!_catalogoIngredientes.any((e) => e.nombre == nuevo)) {
+            _catalogoIngredientes = [
+              ..._catalogoIngredientes,
+              NegocioIngrediente(id: '', nombre: nuevo, precioExtra: precioExtra),
+            ]..sort((a, b) => a.nombre.toLowerCase().compareTo(b.nombre.toLowerCase()));
+          }
+        });
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -238,9 +313,10 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
       Map<String, dynamic> datosProducto = {
         'negocio_id': widget.negocioId,
         'nombre': _nombreCtrl.text.trim(),
-        'precio': double.tryParse(_precioCtrl.text.trim()) ?? 0.0,
+        'precio': _esBodega ? 0.0 : (double.tryParse(_precioCtrl.text.trim()) ?? 0.0),
         'descripcion': _descCtrl.text.trim(),
         'foto_url': fotoFinal,
+        'destacado': _destacado,
         'categoria_negocio': widget.categoriaNegocio,
         ...datosExtras,
       };
@@ -317,134 +393,14 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
   Future<void> _mostrarDialogoProductoExistente(
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
   ) async {
-    final data = doc.data();
-    final nombre = (data['nombre'] ?? 'Producto').toString();
-    final ubicacionesTexto =
-        NegocioUbicacionService.textoUbicaciones(data) ?? 'Sin ubicación registrada';
-    final stock = NegocioUbicacionService.stockTotal(data);
-
-    final cantidadCtrl = TextEditingController(text: '1');
-    final ubicActuales = NegocioUbicacionService.ubicacionesProducto(data);
-    String? lugarSel = ubicActuales.isNotEmpty ? ubicActuales.first.lugar : null;
-
-    final nombresCatalogo = <String>{
-      ..._catalogoUbicaciones.map((e) => e.nombre),
-      ...NegocioUbicacionService.ubicacionesProducto(data).map((u) => u.lugar),
-    }.toList()
-      ..sort();
-
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialog) => AlertDialog(
-          title: const Text('⚠️ Este producto ya existe'),
-          content: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  nombre,
-                  style: const TextStyle(
-                      fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-                Text('En existencia: $stock pza(s)',
-                    style: TextStyle(color: Colors.grey.shade700)),
-                const SizedBox(height: 4),
-                Text('Ubicación: $ubicacionesTexto',
-                    style: const TextStyle(color: Colors.indigo)),
-                const Divider(height: 24),
-                const Text('¿Cuántas piezas vas a agregar y en qué ubicación?',
-                    style: TextStyle(fontWeight: FontWeight.w600)),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  initialValue:
-                      nombresCatalogo.contains(lugarSel) ? lugarSel : null,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Ubicación',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: nombresCatalogo
-                      .map((n) =>
-                          DropdownMenuItem(value: n, child: Text(n)))
-                      .toList(),
-                  onChanged: (v) => setDialog(() => lugarSel = v),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: cantidadCtrl,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'Piezas a agregar',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                foregroundColor: Colors.white,
-              ),
-              onPressed: () async {
-                final cantidad = int.tryParse(cantidadCtrl.text.trim()) ?? 0;
-                if (lugarSel == null || lugarSel!.isEmpty || cantidad <= 0) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    const SnackBar(
-                      content: Text('Elige ubicación y una cantidad válida.'),
-                      backgroundColor: Colors.orange,
-                    ),
-                  );
-                  return;
-                }
-                final messenger = ScaffoldMessenger.of(context);
-                Navigator.pop(ctx);
-                await _agregarStockAProducto(doc, lugarSel!, cantidad);
-                if (!mounted) return;
-                messenger.showSnackBar(
-                  SnackBar(
-                    content: Text(
-                        'Se agregaron $cantidad pza(s) a "$nombre" en $lugarSel.'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-                Navigator.pop(context);
-              },
-              child: const Text('Agregar al inventario'),
-            ),
-          ],
-        ),
-      ),
+    final ok = await AgregarStockProductoDialog.mostrar(
+      context,
+      negocioId: widget.negocioId,
+      productoDoc: doc,
+      catalogoUbicaciones: _catalogoUbicaciones,
     );
-  }
-
-  Future<void> _agregarStockAProducto(
-    QueryDocumentSnapshot<Map<String, dynamic>> doc,
-    String lugar,
-    int cantidad,
-  ) async {
-    final data = doc.data();
-    final actuales = NegocioUbicacionService.ubicacionesProducto(data);
-    final nuevas = [...actuales];
-    final idx = nuevas
-        .indexWhere((u) => u.lugar.toLowerCase() == lugar.toLowerCase());
-    if (idx >= 0) {
-      nuevas[idx] = nuevas[idx].copyWith(cantidad: nuevas[idx].cantidad + cantidad);
-    } else {
-      nuevas.add(StockUbicacion(lugar: lugar, cantidad: cantidad));
-    }
-    await doc.reference.update({
-      'ubicaciones': nuevas.map((u) => u.toMap()).toList(),
-      'stock_total': NegocioUbicacionService.sumarCantidades(nuevas),
-    });
+    if (!mounted || !ok) return;
+    Navigator.pop(context);
   }
 
   // ---------------- Sección de inventario / ubicaciones ----------------
@@ -698,8 +654,8 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
             ),
           ),
           TextButton.icon(
-            onPressed: () {
-              Navigator.push(
+            onPressed: () async {
+              await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (_) => IngredientesNegocioScreen(
@@ -708,6 +664,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
                   ),
                 ),
               );
+              if (mounted) _cargarCatalogoIngredientes();
             },
             icon: const Icon(Icons.settings, size: 18),
             label: const Text('Administrar'),
@@ -719,18 +676,14 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
         style: TextStyle(fontSize: 13, color: Colors.grey),
       ),
       const SizedBox(height: 10),
-      StreamBuilder<List<NegocioIngrediente>>(
-        stream: NegocioIngredienteService.stream(widget.negocioId),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Padding(
-              padding: EdgeInsets.symmetric(vertical: 12),
-              child: Center(child: CircularProgressIndicator()),
-            );
-          }
-          final catalogo = snapshot.data ?? [];
-
-          // Conservamos ingredientes ya guardados aunque ya no estén en el catálogo.
+      if (_cargandoIngredientes)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 12),
+          child: Center(child: CircularProgressIndicator()),
+        )
+      else ...[
+        Builder(builder: (context) {
+          final catalogo = _catalogoIngredientes;
           final nombresCatalogo = catalogo.map((e) => e.nombre).toSet();
           final extras = _ingredientesSeleccionados
               .where((e) => !nombresCatalogo.contains(e))
@@ -784,7 +737,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
                       selectedColor: Colors.green.shade100,
                       checkmarkColor: Colors.green.shade800,
                       onSelected: (val) {
-                        setState(() {
+                        _preservarScroll(() {
                           if (val) {
                             _ingredientesSeleccionados.add(ing.nombre);
                           } else {
@@ -801,7 +754,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
                       selectedColor: Colors.green.shade100,
                       checkmarkColor: Colors.green.shade800,
                       onSelected: (val) {
-                        setState(() {
+                        _preservarScroll(() {
                           if (!val) _ingredientesSeleccionados.remove(nombre);
                         });
                       },
@@ -825,8 +778,8 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
               ),
             ],
           );
-        },
-      ),
+        }),
+      ],
       const SizedBox(height: 8),
     ];
   }
@@ -836,6 +789,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     return Scaffold(
       appBar: AppBar(title: Text(widget.productoId == null ? 'Agregar Producto' : 'Editar Producto'), backgroundColor: globals.colorFondo, foregroundColor: Colors.white),
       body: SingleChildScrollView(
+        controller: _scrollCtrl,
         padding: const EdgeInsets.all(16.0),
         child: Form(
           key: _formKey,
@@ -859,11 +813,22 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
               ),
               const SizedBox(height: 20),
               TextFormField(controller: _nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre del producto', border: OutlineInputBorder()), validator: (val) => val!.isEmpty ? 'Requerido' : null),
-              const SizedBox(height: 12),
-              TextFormField(controller: _precioCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Precio (\$)', border: OutlineInputBorder()), validator: (val) => val!.isEmpty ? 'Requerido' : null),
+              if (!_esBodega) ...[
+                const SizedBox(height: 12),
+                TextFormField(controller: _precioCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Precio (\$)', border: OutlineInputBorder()), validator: (val) => val!.isEmpty ? 'Requerido' : null),
+              ],
               const SizedBox(height: 12),
               TextFormField(controller: _descCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Descripción corta', border: OutlineInputBorder())),
-              const SizedBox(height: 20),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Destacar en el menú'),
+                subtitle: const Text('Aparece primero en el catálogo y menú del local'),
+                value: _destacado,
+                activeThumbColor: Colors.amber.shade800,
+                secondary: Icon(Icons.star_rounded, color: Colors.amber.shade700),
+                onChanged: (v) => setState(() => _destacado = v),
+              ),
+              const SizedBox(height: 12),
               
               if (_usaIngredientes) ..._seccionIngredientes(),
               if (_esProductos) ..._seccionInventario(),

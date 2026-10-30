@@ -131,10 +131,10 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
 
   Future<void> _guardarConfiguracion() async {
     final costoKm = double.tryParse(_costoPorKmCtrl.text.trim()) ?? 0;
-    if (costoKm > 0 && _ubicacionGeoNegocio == null) {
+    if (_ubicacionGeoNegocio == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Para cobrar por kilómetro debes marcar la ubicación GPS exacta del local.'),
+          content: Text('Marca la ubicación GPS del local para activar envíos a domicilio.'),
           backgroundColor: Colors.orange,
         ),
       );
@@ -269,7 +269,7 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
                       ),
                       const SizedBox(height: 6),
                       const Text(
-                        'El cliente confirma en mapa satelital y el costo se calcula según los km al local.',
+                        'El cliente confirma en mapa satelital. Pon 0 en costo por km para envío gratis.',
                         style: TextStyle(color: Colors.black87, fontSize: 13),
                       ),
                       const SizedBox(height: 12),
@@ -278,7 +278,7 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         decoration: const InputDecoration(
                           labelText: 'Costo por kilómetro (\$)',
-                          hintText: 'Ej. 15',
+                          hintText: '0 = envío gratis',
                           border: OutlineInputBorder(),
                           filled: true,
                           fillColor: Colors.white,

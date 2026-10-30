@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:angostura_digital/services/firebase_service.dart';
 import 'package:angostura_digital/utils/auth_plataforma.dart';
+import 'package:angostura_digital/utils/auth_red_precalentar.dart';
+import 'package:angostura_digital/utils/red_diagnostico.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -11,22 +14,66 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
+  bool _preparandoConexion = true;
+  String _mensajeEstado = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _prepararConexion();
+  }
+
+  Future<void> _prepararConexion() async {
+    unawaited(precalentarRedFirebase());
+    unawaited(RedDiagnostico.ejecutar(contexto: 'login'));
+    try {
+      await precalentarLoginCompleto(
+        onProgreso: (msg) {
+          if (mounted) setState(() => _mensajeEstado = msg);
+        },
+      );
+    } catch (_) {}
+    if (mounted) {
+      setState(() {
+        _preparandoConexion = false;
+        _mensajeEstado = '';
+      });
+    }
+  }
 
   Future<void> _iniciarSesion() async {
-    setState(() => _isLoading = true);
+    if (_isLoading) return;
+    setState(() {
+      _isLoading = true;
+      _mensajeEstado = 'Iniciando...';
+    });
     try {
-      final cred = await AuthService().signInSegunPlataforma();
+      final cred = await AuthService().signInSegunPlataforma(
+        onProgreso: (msg) {
+          if (mounted) setState(() => _mensajeEstado = msg);
+        },
+      );
       if (!mounted) return;
       if (cred == null) {
-        // Usuario canceló
         return;
+      }
+    } on TimeoutException catch (e) {
+      if (mounted) {
+        _mostrarError(
+          e.message ?? 'La conexión tardó demasiado. Intenta de nuevo.',
+        );
       }
     } catch (e) {
       if (mounted) {
         _mostrarError('No se pudo iniciar sesión. Intenta de nuevo.');
       }
     } finally {
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _mensajeEstado = '';
+        });
+      }
     }
   }
 
@@ -69,9 +116,37 @@ class _LoginScreenState extends State<LoginScreen> {
                   style: TextStyle(color: Colors.grey.shade700, height: 1.4),
                 ),
                 const SizedBox(height: 40),
-                if (_isLoading)
-                  const CircularProgressIndicator()
-                else if (esApple)
+                if (_preparandoConexion) ...[
+                  const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(strokeWidth: 2.5),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    _mensajeEstado.isNotEmpty
+                        ? _mensajeEstado
+                        : 'Preparando conexión...',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+                  ),
+                ] else if (_isLoading) ...[
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(
+                    _mensajeEstado.isNotEmpty
+                        ? _mensajeEstado
+                        : (esApple ? 'Conectando con Apple…' : 'Conectando con Google…'),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey.shade600, fontSize: 14),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'En zonas con señal débil puede tardar un poco más.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                  ),
+                ] else if (esApple)
                   SignInWithAppleStyleButton(onPressed: _iniciarSesion)
                 else
                   GoogleSignInButton(onPressed: _iniciarSesion),

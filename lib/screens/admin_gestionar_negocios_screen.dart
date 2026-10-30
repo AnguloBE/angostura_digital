@@ -99,9 +99,9 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
           ...payload,
           'estado': ComisionAppUtils.estadoActivo,
           'fecha_creacion': FieldValue.serverTimestamp(),
-          ...const ComisionAppConfig().aFirestore(),
-          'comision_acumulada': 0,
-          'comision_periodo_inicio': FieldValue.serverTimestamp(),
+          if (!CategoriasNegocio.esBodega(categoria)) ...const ComisionAppConfig().aFirestore(),
+          if (!CategoriasNegocio.esBodega(categoria)) 'comision_acumulada': 0,
+          if (!CategoriasNegocio.esBodega(categoria)) 'comision_periodo_inicio': FieldValue.serverTimestamp(),
         });
       }
 

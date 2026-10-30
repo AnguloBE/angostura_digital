@@ -86,10 +86,16 @@ class NegocioEquipoService {
   static Stream<List<NegocioMiembro>> streamEquipo(String negocioId) {
     return _equipoRef(negocioId).snapshots().map((snap) {
       final lista = snap.docs.map((d) => NegocioMiembro.desdeDoc(negocioId, d)).toList();
+      int prioridadRol(String rol) {
+        if (NegocioEquipoUtils.esDueno(rol)) return 0;
+        if (NegocioEquipoUtils.esEncargado(rol)) return 1;
+        return 2;
+      }
+
       lista.sort((a, b) {
-        if (NegocioEquipoUtils.esDueno(a.rol) != NegocioEquipoUtils.esDueno(b.rol)) {
-          return NegocioEquipoUtils.esDueno(a.rol) ? -1 : 1;
-        }
+        final pa = prioridadRol(a.rol);
+        final pb = prioridadRol(b.rol);
+        if (pa != pb) return pa.compareTo(pb);
         return a.nombre.compareTo(b.nombre);
       });
       return lista;
@@ -98,26 +104,13 @@ class NegocioEquipoService {
 
   /// Lista negocios del usuario vía espejo en su perfil (sin collectionGroup).
   static Stream<List<NegocioAcceso>> streamMisAccesos(String uid) {
-    return Stream.fromFuture(sincronizarAccesosUsuario(uid)).asyncExpand((_) {
-      return _accesoUsuarioRef(uid).snapshots().asyncMap((snap) async {
-        final accesos = <NegocioAcceso>[];
-        for (final doc in snap.docs) {
-          final base = NegocioAcceso.desdeMap(doc.id, doc.data());
-          final neg = await _db.collection('negocios').doc(doc.id).get();
-          if (!neg.exists) continue;
-          final data = neg.data()!;
-          accesos.add(NegocioAcceso(
-            negocioId: doc.id,
-            rol: base.rol,
-            nombre: (data['nombre'] ?? base.nombre).toString(),
-            categoria: (data['categoria'] ?? base.categoria).toString(),
-            estado: (data['estado'] ?? base.estado).toString(),
-            fotoUrl: data['foto_url']?.toString() ?? base.fotoUrl,
-          ));
-        }
-        accesos.sort((a, b) => a.nombre.compareTo(b.nombre));
-        return accesos;
-      });
+    sincronizarAccesosUsuario(uid);
+    return _accesoUsuarioRef(uid).snapshots().map((snap) {
+      final accesos = snap.docs
+          .map((doc) => NegocioAcceso.desdeMap(doc.id, doc.data()))
+          .toList();
+      accesos.sort((a, b) => a.nombre.compareTo(b.nombre));
+      return accesos;
     });
   }
 

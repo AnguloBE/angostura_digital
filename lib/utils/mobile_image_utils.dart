@@ -81,8 +81,11 @@ class MobileImageUtils {
     int maxWidth = 600,
     int maxHeight = 600,
   }) async {
-    final XFile? seleccion =
-        await _picker.pickImage(source: source, imageQuality: imageQuality);
+    final XFile? seleccion = await _picker.pickImage(
+      source: source,
+      imageQuality: imageQuality,
+      preferredCameraDevice: CameraDevice.rear,
+    );
     if (seleccion == null) return null;
     if (!context.mounted) return null;
 

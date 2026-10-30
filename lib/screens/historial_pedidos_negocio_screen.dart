@@ -5,17 +5,20 @@ import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/services/negocio_equipo_service.dart';
 import 'package:angostura_digital/utils/negocio_equipo_utils.dart';
 import 'package:angostura_digital/utils/pedidos_historial_utils.dart';
+import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/widgets/pedido_producto_linea.dart';
 import 'package:angostura_digital/widgets/pedido_ubicacion_entrega.dart';
 
 class HistorialPedidosNegocioScreen extends StatefulWidget {
   final String negocioId;
   final String nombreNegocio;
+  final String categoria;
 
   const HistorialPedidosNegocioScreen({
     super.key,
     required this.negocioId,
     required this.nombreNegocio,
+    this.categoria = '',
   });
 
   @override
@@ -27,6 +30,8 @@ class _HistorialPedidosNegocioScreenState extends State<HistorialPedidosNegocioS
   FiltroEstadoPedidos _filtroEstado = FiltroEstadoPedidos.todos;
   bool _verificandoAcceso = true;
   bool _accesoDenegado = false;
+
+  bool get _esBodega => CategoriasNegocio.esBodega(widget.categoria);
 
   @override
   void initState() {
@@ -45,11 +50,12 @@ class _HistorialPedidosNegocioScreenState extends State<HistorialPedidosNegocioS
     final esAdmin = userSnap.data()?['rol'] == 'admin';
     final rolNegocio = await NegocioEquipoService.obtenerRolEnNegocio(widget.negocioId, uid);
     final esDueno = NegocioEquipoUtils.esDueno(rolNegocio);
+    final esEncargado = NegocioEquipoUtils.esEncargado(rolNegocio);
 
     if (!mounted) return;
     setState(() {
       _verificandoAcceso = false;
-      _accesoDenegado = !esAdmin && !esDueno;
+      _accesoDenegado = !esAdmin && !esDueno && !esEncargado;
     });
   }
 
@@ -82,7 +88,7 @@ class _HistorialPedidosNegocioScreenState extends State<HistorialPedidosNegocioS
                 Icon(Icons.lock_outline, size: 64, color: Colors.grey.shade400),
                 const SizedBox(height: 16),
                 const Text(
-                  'Solo los dueños pueden ver el historial y ventas.',
+                  'Solo dueños y encargados pueden ver el historial y ventas.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 16),
                 ),
@@ -231,6 +237,29 @@ class _HistorialPedidosNegocioScreenState extends State<HistorialPedidosNegocioS
   }
 
   Widget _tarjetasResumen(ResumenHistorialPedidos r) {
+    if (_esBodega) {
+      return Column(
+        children: [
+          Row(
+            children: [
+              Expanded(child: _miniCard('Salidas', '${r.totalPedidos}', Icons.output, Colors.brown)),
+              const SizedBox(width: 8),
+              Expanded(child: _miniCard('Unidades', '${r.unidadesVendidas}', Icons.inventory_2, Colors.indigo)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(child: _miniCard('Entregados', '${r.entregados}', Icons.check_circle, Colors.teal)),
+              const SizedBox(width: 8),
+              Expanded(child: _miniCard('En curso', '${r.enProceso}', Icons.hourglass_top, Colors.orange)),
+              const SizedBox(width: 8),
+              Expanded(child: _miniCard('Cancelados', '${r.cancelados}', Icons.cancel, Colors.redAccent)),
+            ],
+          ),
+        ],
+      );
+    }
     return Column(
       children: [
         Row(
@@ -379,7 +408,9 @@ class _HistorialPedidosNegocioScreenState extends State<HistorialPedidosNegocioS
           ),
         ),
         title: Text(
-          '#${p.id.substring(0, 6).toUpperCase()} · \$${p.totalCobrado.toStringAsFixed(2)}',
+          _esBodega
+              ? '#${p.id.substring(0, 6).toUpperCase()} · ${p.cantidadArticulos} artículo(s)'
+              : '#${p.id.substring(0, 6).toUpperCase()} · \$${p.totalCobrado.toStringAsFixed(2)}',
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
         ),
         subtitle: Column(
@@ -387,13 +418,15 @@ class _HistorialPedidosNegocioScreenState extends State<HistorialPedidosNegocioS
           children: [
             Text(PedidosHistorialUtils.formatearFecha(p.fecha), style: const TextStyle(fontSize: 12)),
             Text(
-              '${p.estado} · ${p.cantidadArticulos} artículo(s) · ${p.metodoEntrega == 'recoger' ? 'Recoger' : 'Domicilio'}',
+              _esBodega
+                  ? '${p.estado} · ${p.cantidadArticulos} artículo(s) · Bodega'
+                  : '${p.estado} · ${p.cantidadArticulos} artículo(s) · ${p.metodoEntrega == 'recoger' ? 'Recoger' : 'Domicilio'}',
               style: TextStyle(fontSize: 11, color: color, fontWeight: FontWeight.w600),
             ),
           ],
         ),
         children: [
-          if (p.esDomicilio) ...[
+          if (p.esDomicilio && !_esBodega) ...[
             PedidoUbicacionEntregaBlock(pedido: p),
             const Divider(height: 16),
           ],
@@ -404,22 +437,24 @@ class _HistorialPedidosNegocioScreenState extends State<HistorialPedidosNegocioS
             ),
           ],
           const Divider(height: 16),
-          _filaDetalle('Subtotal', p.subtotal),
-          if (p.costoEnvio > 0) _filaDetalle('Envío', p.costoEnvio),
-          if (p.comisionLaPagaCliente) _filaDetalle('Uso de la app', p.comisionApp),
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Total', style: TextStyle(fontWeight: FontWeight.bold)),
-                Text(
-                  '\$${p.totalCobrado.toStringAsFixed(2)}',
-                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16),
-                ),
-              ],
+          if (!_esBodega) ...[
+            _filaDetalle('Subtotal', p.subtotal),
+            if (p.costoEnvio > 0) _filaDetalle('Envío', p.costoEnvio),
+            if (p.comisionLaPagaCliente) _filaDetalle('Uso de la app', p.comisionApp),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Total', style: TextStyle(fontWeight: FontWeight.bold)),
+                  Text(
+                    '\$${p.totalCobrado.toStringAsFixed(2)}',
+                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16),
+                  ),
+                ],
+              ),
             ),
-          ),
+          ],
           if (p.notas.isNotEmpty) ...[
             const SizedBox(height: 8),
             Container(

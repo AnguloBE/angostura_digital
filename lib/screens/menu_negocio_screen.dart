@@ -13,6 +13,8 @@ import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/widgets/reservar_cita_sheet.dart';
+import 'package:angostura_digital/utils/orden_productos_utils.dart';
+import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
 
 class MenuNegocioScreen extends StatefulWidget {
   final String negocioId;
@@ -40,23 +42,18 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
   final TextEditingController _busquedaCtrl = TextEditingController();
   String _busqueda = '';
 
+  bool get _esBodega => CategoriasNegocio.esBodega(widget.categoriaNegocio);
+
+  bool get _ocultarPrecios => widget.modoTrabajador && _esBodega;
+
   @override
   void dispose() {
     _busquedaCtrl.dispose();
     super.dispose();
   }
 
-  bool _coincideBusqueda(Map<String, dynamic> data, String q) {
-    if (q.isEmpty) return true;
-    final nombre = (data['nombre'] ?? '').toString().toLowerCase();
-    final desc = (data['descripcion'] ?? '').toString().toLowerCase();
-    final codigo = (data['codigo_barras'] ?? '').toString().toLowerCase();
-    final ing = NegocioIngredienteService.textoIngredientes(data)?.toLowerCase() ?? '';
-    return nombre.contains(q) ||
-        desc.contains(q) ||
-        codigo.contains(q) ||
-        ing.contains(q);
-  }
+  bool _coincideBusqueda(Map<String, dynamic> data, String q) =>
+      coincideBusquedaProducto(data, q);
 
   String? _verificarHorario(Map<String, dynamic>? horario) {
     if (horario == null) return null; 
@@ -153,20 +150,27 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
       floatingActionButton: Consumer<CartProvider>(
         builder: (context, cart, _) {
           if (cart.items.isEmpty) return const SizedBox.shrink();
+          final piezas =
+              cart.items.values.fold<int>(0, (s, i) => s + i.cantidad);
           return FloatingActionButton.extended(
             backgroundColor: Colors.green,
             foregroundColor: Colors.white,
             icon: const Icon(Icons.shopping_cart),
             label: Text(
               widget.modoTrabajador
-                  ? 'Confirmar (\$${cart.total.toStringAsFixed(2)})'
+                  ? (_esBodega
+                      ? 'Confirmar salida ($piezas pza)'
+                      : 'Confirmar (\$${cart.total.toStringAsFixed(2)})')
                   : 'Ver Carrito ( \$${cart.total.toStringAsFixed(2)} )',
             ),
             onPressed: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => CarritoScreen(modoMostrador: widget.modoTrabajador),
+                  builder: (_) => CarritoScreen(
+                    modoMostrador: widget.modoTrabajador,
+                    categoriaNegocio: widget.categoriaNegocio,
+                  ),
                 ),
               );
             },
@@ -223,16 +227,22 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  color: Colors.indigo.shade50,
+                  color: _esBodega ? Colors.brown.shade50 : Colors.indigo.shade50,
                   child: Row(
                     children: [
-                      Icon(Icons.point_of_sale, color: Colors.indigo.shade700, size: 20),
+                      Icon(
+                        _esBodega ? Icons.warehouse : Icons.point_of_sale,
+                        color: _esBodega ? Colors.brown.shade700 : Colors.indigo.shade700,
+                        size: 20,
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Modo mostrador · ${widget.nombreNegocio}',
+                          _esBodega
+                              ? 'Salida de bodega · ${widget.nombreNegocio}'
+                              : 'Modo mostrador · ${widget.nombreNegocio}',
                           style: TextStyle(
-                            color: Colors.indigo.shade900,
+                            color: _esBodega ? Colors.brown.shade900 : Colors.indigo.shade900,
                             fontWeight: FontWeight.bold,
                             fontSize: 13,
                           ),
@@ -317,7 +327,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                   decoration: InputDecoration(
                     hintText: esServiciosNeg
                         ? 'Buscar servicio...'
-                        : 'Buscar platillo, producto o código...',
+                        : 'Buscar por nombre, ingrediente, 600 ml, código...',
                     prefixIcon: const Icon(Icons.search),
                     suffixIcon: _busqueda.isNotEmpty
                         ? IconButton(
@@ -360,12 +370,13 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                       );
                     }
 
-                    final visibles = _busqueda.isEmpty
+                    final filtrados = _busqueda.isEmpty
                         ? productos
                         : productos.where((doc) {
                             final d = doc.data() as Map<String, dynamic>;
                             return _coincideBusqueda(d, _busqueda);
                           }).toList();
+                    final visibles = ordenarProductosDocumentos(filtrados);
 
                     if (visibles.isEmpty) {
                       return Center(
@@ -470,8 +481,34 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                                           child: Column(
                                             crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
-                                              Text(data['nombre'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15, height: 1.15, color: !isAbierto ? Colors.grey : Colors.black87)),
-                                              const SizedBox(height: 6), Text('\$${data['precio']}', style: TextStyle(color: !isAbierto ? Colors.grey : Colors.green, fontWeight: FontWeight.bold, fontSize: 17)),
+                                              Row(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  if (productoEsDestacado(data)) ...[
+                                                    Padding(
+                                                      padding: const EdgeInsets.only(top: 2, right: 4),
+                                                      child: Icon(Icons.star_rounded, size: 18, color: Colors.amber.shade700),
+                                                    ),
+                                                  ],
+                                                  Expanded(
+                                                    child: Text(
+                                                      data['nombre'] ?? '',
+                                                      maxLines: 2,
+                                                      overflow: TextOverflow.ellipsis,
+                                                      style: TextStyle(
+                                                        fontWeight: FontWeight.bold,
+                                                        fontSize: 15,
+                                                        height: 1.15,
+                                                        color: !isAbierto ? Colors.grey : Colors.black87,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                              if (!_ocultarPrecios) ...[
+                                                const SizedBox(height: 6),
+                                                Text('\$${data['precio']}', style: TextStyle(color: !isAbierto ? Colors.grey : Colors.green, fontWeight: FontWeight.bold, fontSize: 17)),
+                                              ],
                                               if (data['descripcion'] != null && data['descripcion'].toString().isNotEmpty) ...[const SizedBox(height: 6), Text(data['descripcion'], style: TextStyle(fontSize: 13, color: Colors.grey.shade800))],
                                               if (extraWidgets.isNotEmpty) ...[const SizedBox(height: 8), Column(crossAxisAlignment: CrossAxisAlignment.start, children: extraWidgets)],
                                               if (agotado) ...[const SizedBox(height: 8), _badgeStock('Agotado', Colors.red)],
@@ -549,6 +586,10 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
     final cart = context.read<CartProvider>();
     final esServicio = data['es_servicio'] == true;
 
+    final sinPrecio =
+        CategoriasNegocio.sinRegistroDinero(dataNegocio['categoria']?.toString());
+    final precioItem = sinPrecio ? 0.0 : (data['precio'] ?? 0).toDouble();
+
     if (!esServicio) {
       if (controlaInventario && cart.cantidadEnCarrito(docId) >= stock) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -563,7 +604,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
         negocioId,
         docId,
         data['nombre'] ?? '',
-        (data['precio'] ?? 0).toDouble(),
+        precioItem,
         foto,
         detalles: ProductoPedidoUtils.detallesDesdeFirestore(data),
         ingredientesBase: NegocioIngredienteService.listaIngredientes(data),

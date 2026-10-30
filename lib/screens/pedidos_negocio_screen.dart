@@ -30,6 +30,8 @@ class PedidosNegocioScreen extends StatelessWidget {
   });
 
   bool get _puedeVentaEnLocal => CategoriasNegocio.puedeVentaEnLocal(categoria);
+  bool get _esBodega => CategoriasNegocio.esBodega(categoria);
+  bool get _sinDinero => CategoriasNegocio.sinRegistroDinero(categoria);
 
   void _abrirNuevoPedidoMostrador(BuildContext context) {
     context.read<CartProvider>().limpiarCarrito();
@@ -148,7 +150,9 @@ class PedidosNegocioScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          _esNegocioServicios ? 'Citas: $nombreNegocio' : 'Pedidos: $nombreNegocio',
+          _esBodega
+              ? 'Salidas: $nombreNegocio'
+              : (_esNegocioServicios ? 'Citas: $nombreNegocio' : 'Pedidos: $nombreNegocio'),
           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         backgroundColor: globals.colorFondo,
@@ -157,7 +161,7 @@ class PedidosNegocioScreen extends StatelessWidget {
           if (puedeVerHistorial)
             IconButton(
               icon: const Icon(Icons.analytics_outlined),
-              tooltip: 'Historial y ventas',
+              tooltip: CategoriasNegocio.etiquetaHistorial(categoria),
               onPressed: () {
                 Navigator.push(
                   context,
@@ -165,6 +169,7 @@ class PedidosNegocioScreen extends StatelessWidget {
                     builder: (_) => HistorialPedidosNegocioScreen(
                       negocioId: negocioId,
                       nombreNegocio: nombreNegocio,
+                      categoria: categoria,
                     ),
                   ),
                 );
@@ -175,11 +180,13 @@ class PedidosNegocioScreen extends StatelessWidget {
       floatingActionButton: _puedeVentaEnLocal
           ? FloatingActionButton.extended(
               onPressed: () => _abrirNuevoPedidoMostrador(context),
-              backgroundColor: Colors.indigo,
+              backgroundColor: _esBodega ? Colors.brown.shade700 : Colors.indigo,
               foregroundColor: Colors.white,
-              icon: Icon(CategoriasNegocio.esProductos(categoria)
-                  ? Icons.point_of_sale
-                  : Icons.add_shopping_cart),
+              icon: Icon(_esBodega
+                  ? Icons.output
+                  : (CategoriasNegocio.usaInventario(categoria)
+                      ? Icons.point_of_sale
+                      : Icons.add_shopping_cart)),
               label: Text(CategoriasNegocio.etiquetaVentaEnLocal(categoria)),
             )
           : null,
@@ -197,9 +204,11 @@ class PedidosNegocioScreen extends StatelessWidget {
                     child: Text(
                       _esNegocioServicios
                           ? 'Citas de las últimas 24 horas. Anteriores en Historial y ventas.'
-                          : _puedeVentaEnLocal
-                              ? 'Últimas 24 horas. Usa «${CategoriasNegocio.etiquetaVentaEnLocal(categoria)}» para registrar ventas en el local.'
-                              : 'Últimas 24 horas (incluye turno nocturno). Pedidos anteriores en Historial y ventas.',
+                          : _esBodega
+                              ? 'Últimas 24 horas. Usa «Sacar producto» para registrar salidas.'
+                              : _puedeVentaEnLocal
+                                  ? 'Últimas 24 horas. Usa «${CategoriasNegocio.etiquetaVentaEnLocal(categoria)}» para registrar ventas en el local.'
+                                  : 'Últimas 24 horas (incluye turno nocturno). Pedidos anteriores en Historial y ventas.',
                       style: TextStyle(fontSize: 12, color: Colors.blueGrey.shade800, height: 1.3),
                     ),
                   ),
@@ -209,7 +218,11 @@ class PedidosNegocioScreen extends StatelessWidget {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('pedidos').where('negocio_id', isEqualTo: negocioId).snapshots(),
+        stream: FirebaseFirestore.instance
+            .collection('pedidos')
+            .where('negocio_id', isEqualTo: negocioId)
+            .limit(80)
+            .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
           var pedidos = snapshot.data?.docs.toList() ?? [];
@@ -285,6 +298,8 @@ class PedidosNegocioScreen extends StatelessWidget {
               final metodoEntrega = data['metodo_entrega'] ?? 'domicilio';
               final esMostrador =
                   data['es_pedido_mostrador'] == true || metodoEntrega == 'mostrador';
+              final pedidoSinDinero =
+                  _sinDinero || PedidoMostradorUtils.esPedidoBodega(data);
               
               final subtotal = (data['subtotal'] ?? 0).toDouble();
               final costoEnvio = (data['costo_envio'] ?? 0).toDouble();
@@ -458,7 +473,7 @@ class PedidosNegocioScreen extends StatelessWidget {
                       if (data['productos'] != null) ...[
                         Builder(builder: (context) {
                           final esProductos =
-                              CategoriasNegocio.esProductos(categoria);
+                              CategoriasNegocio.usaInventario(categoria);
                           final surtidoLineas =
                               (data['surtido_lineas'] as Map?) ?? {};
                           final productos = data['productos'] as List<dynamic>;
@@ -535,7 +550,7 @@ class PedidosNegocioScreen extends StatelessWidget {
                           );
                         }),
                       ],
-                      if (CategoriasNegocio.esProductos(categoria) &&
+                      if (CategoriasNegocio.usaInventario(categoria) &&
                           data['productos'] != null &&
                           estadoActual != 'Cancelado') ...[
                         const SizedBox(height: 10),
@@ -571,46 +586,47 @@ class PedidosNegocioScreen extends StatelessWidget {
                           ),
                         ),
                       ],
-                      _buildInfoPago(data, totalARecibir),
-                      const Divider(height: 20),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            'Subtotal: \$${subtotal.toStringAsFixed(2)}',
-                            style: const TextStyle(color: Colors.black54),
-                          ),
-                          if (!_esNegocioServicios &&
-                              metodoEntrega == 'domicilio' &&
-                              costoEnvio > 0)
+                      if (!pedidoSinDinero) ...[
+                        _buildInfoPago(data, totalARecibir),
+                        const Divider(height: 20),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
                             Text(
-                              'Envío: \$${costoEnvio.toStringAsFixed(2)}',
-                              style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
-                            )
-                          else if (!_esNegocioServicios &&
-                              (metodoEntrega == 'recoger' || metodoEntrega == 'mostrador'))
-                            Text(
-                              metodoEntrega == 'mostrador'
-                                  ? 'Pedido en mostrador (sin envío)'
-                                  : 'Recoger en local (sin envío)',
-                              style: const TextStyle(
-                                color: Colors.green,
-                                fontWeight: FontWeight.w600,
-                              ),
+                              'Subtotal: \$${subtotal.toStringAsFixed(2)}',
+                              style: const TextStyle(color: Colors.black54),
                             ),
-                          if (comisionLaPagaCliente)
-                            Text(
-                              'Uso de la app: \$${comisionApp.toStringAsFixed(2)}',
-                              style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
-                            ),
-                          const SizedBox(height: 6),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
+                            if (!_esNegocioServicios &&
+                                metodoEntrega == 'domicilio' &&
+                                costoEnvio > 0)
                               Text(
-                                comisionLaPagaCliente ? 'Total cobrado al cliente:' : 'Total a recibir:',
-                                style: const TextStyle(fontWeight: FontWeight.bold),
+                                'Envío: \$${costoEnvio.toStringAsFixed(2)}',
+                                style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
+                              )
+                            else if (!_esNegocioServicios &&
+                                (metodoEntrega == 'recoger' || metodoEntrega == 'mostrador'))
+                              Text(
+                                metodoEntrega == 'mostrador'
+                                    ? 'Pedido en mostrador (sin envío)'
+                                    : 'Recoger en local (sin envío)',
+                                style: const TextStyle(
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
+                            if (comisionLaPagaCliente)
+                              Text(
+                                'Uso de la app: \$${comisionApp.toStringAsFixed(2)}',
+                                style: const TextStyle(color: Colors.black54, fontWeight: FontWeight.w600),
+                              ),
+                            const SizedBox(height: 6),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  comisionLaPagaCliente ? 'Total cobrado al cliente:' : 'Total a recibir:',
+                                  style: const TextStyle(fontWeight: FontWeight.bold),
+                                ),
                               Text(
                                 '\$${totalARecibir.toStringAsFixed(2)}',
                                 style: const TextStyle(
@@ -623,6 +639,18 @@ class PedidosNegocioScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                      ] else if (pedidoSinDinero) ...[
+                        const Divider(height: 12),
+                        Text(
+                          metodoEntrega == 'bodega'
+                              ? 'Salida de bodega (sin cobro)'
+                              : 'Movimiento sin registro de dinero',
+                          style: TextStyle(
+                            color: Colors.brown.shade700,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),

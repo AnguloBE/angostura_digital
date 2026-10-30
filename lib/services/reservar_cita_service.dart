@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:angostura_digital/services/firestore_grpc_service.dart';
 import 'package:angostura_digital/services/notificaciones_pedido_service.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/servicio_cita_utils.dart';
@@ -77,27 +78,30 @@ class ReservarCitaService {
       if (fotoUrl != null && fotoUrl.isNotEmpty) 'foto_url': fotoUrl,
     };
 
-    final ref = await FirebaseFirestore.instance.collection('pedidos').add({
-      'cliente_id': user.uid,
-      'negocio_id': negocioId,
-      'negocio_nombre': negocioNombre,
-      'productos': [producto],
-      'subtotal': subtotal,
-      'costo_envio': 0.0,
-      'comision_app': comisionMonto,
-      'comision_pagada_por': config.pagadaPor,
-      'total': total,
-      'estado': 'Pendiente',
-      'notas': '',
-      'metodo_pago': metodoPago,
-      'metodo_entrega': 'cita',
-      'tipo_negocio': 'servicios',
-      'tiene_cita': true,
-      'direccion': 'Cita en el local del negocio.',
-      'fecha': FieldValue.serverTimestamp(),
-    });
+    final pedidoId = await FirestoreGrpcService.crearPedido(
+      {
+        'cliente_id': user.uid,
+        'negocio_id': negocioId,
+        'negocio_nombre': negocioNombre,
+        'productos': [producto],
+        'subtotal': subtotal,
+        'costo_envio': 0.0,
+        'comision_app': comisionMonto,
+        'comision_pagada_por': config.pagadaPor,
+        'total': total,
+        'estado': 'Pendiente',
+        'notas': '',
+        'metodo_pago': metodoPago,
+        'metodo_entrega': 'cita',
+        'tipo_negocio': 'servicios',
+        'tiene_cita': true,
+        'direccion': 'Cita en el local del negocio.',
+        'fecha': FieldValue.serverTimestamp(),
+      },
+      forzarRest: FirestoreGrpcService.usarRestDirecto,
+    );
 
-    await NotificacionesPedidoService.solicitarAvisoDueno(ref.id);
-    return ref.id;
+    await NotificacionesPedidoService.solicitarAvisoDueno(pedidoId);
+    return pedidoId;
   }
 }

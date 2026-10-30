@@ -24,7 +24,11 @@ class HomeTab extends StatelessWidget {
         iconTheme: const IconThemeData(color: Colors.white), 
       ),
       body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('promociones').orderBy('fecha_creacion', descending: true).snapshots(),
+        stream: FirebaseFirestore.instance
+            .collection('promociones')
+            .orderBy('fecha_creacion', descending: true)
+            .limit(40)
+            .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
 

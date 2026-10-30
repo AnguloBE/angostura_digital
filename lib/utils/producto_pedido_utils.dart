@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
 import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
+import 'package:angostura_digital/utils/categorias_negocio.dart';
 
 /// Detalles de productos y promociones en carrito y pedidos.
 class ProductoPedidoUtils {
@@ -424,6 +425,103 @@ class ProductoPedidoUtils {
     );
   }
 
+  /// Detalle de un producto o servicio del catálogo (gestión del negocio).
+  static Future<void> mostrarDetalleCatalogo(
+    BuildContext context, {
+    required String productoId,
+    required Map<String, dynamic> data,
+    String? categoriaNegocio,
+    VoidCallback? onEditar,
+    VoidCallback? onEliminar,
+  }) async {
+    final esServicio = data['es_servicio'] == true;
+    final nombre = data['nombre']?.toString() ?? (esServicio ? 'Servicio' : 'Producto');
+    final precio = (data['precio'] as num?)?.toDouble() ?? 0;
+    final fotoUrl = data['foto_url']?.toString();
+
+    final detalles = detallesDesdeFirestore(data);
+    void putExtra(String key, dynamic value) {
+      if (value == null) return;
+      final texto = value.toString().trim();
+      if (texto.isNotEmpty) detalles[key] = texto;
+    }
+
+    putExtra('codigo_barras', data['codigo_barras']);
+    if (esServicio) {
+      final ts = data['tipo_servicio']?.toString() ?? 'cita';
+      detalles['tipo_servicio'] =
+          ts == 'cita' ? 'Con cita previa' : 'Solicitud a domicilio';
+    } else if (CategoriasNegocio.usaInventario(categoriaNegocio)) {
+      final stock = NegocioUbicacionService.stockTotal(data);
+      detalles['stock'] = '$stock pieza(s)';
+      final ubic = NegocioUbicacionService.textoUbicaciones(data);
+      if (ubic != null) detalles['ubicacion'] = ubic;
+    }
+
+    final filas = detalles.entries
+        .where((e) => e.key != 'tipo')
+        .map((e) => _filaDetalle(_etiqueta(e.key, esPromo: false), e.value))
+        .toList();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(nombre, style: const TextStyle(fontSize: 18)),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: SquareImage(
+                  imageUrl: fotoUrl,
+                  size: 140,
+                  borderRadius: BorderRadius.circular(12),
+                  useCachedNetwork: true,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Text(
+                'Precio: \$${precio.toStringAsFixed(2)}',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 12),
+              if (filas.isEmpty)
+                Text(
+                  'No hay medida ni detalles guardados para este producto.',
+                  style: TextStyle(color: Colors.orange.shade800, fontSize: 14),
+                )
+              else
+                ...filas,
+            ],
+          ),
+        ),
+        actions: [
+          if (onEliminar != null)
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                onEliminar();
+              },
+              child: const Text('Eliminar', style: TextStyle(color: Colors.red)),
+            ),
+          if (onEditar != null)
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                onEditar();
+              },
+              child: const Text('Editar'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   static String _etiqueta(String key, {required bool esPromo}) {
     switch (key) {
       case 'contenido':
@@ -446,6 +544,12 @@ class ProductoPedidoUtils {
         return 'Precio en promoción';
       case 'vigencia':
         return 'Válida hasta';
+      case 'ubicacion':
+        return 'Ubicación en tienda';
+      case 'stock':
+        return 'Stock';
+      case 'tipo_servicio':
+        return 'Tipo de servicio';
       case 'negocio':
         return 'Negocio';
       default:

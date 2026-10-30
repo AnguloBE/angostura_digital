@@ -14,7 +14,9 @@ class _AppShellState extends State<AppShell> {
   @override
   void initState() {
     super.initState();
-    NotificacionesService.inicializar();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificacionesService.inicializar();
+    });
   }
 
   @override

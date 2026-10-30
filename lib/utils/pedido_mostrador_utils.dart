@@ -58,6 +58,16 @@ class PedidoMostradorUtils {
         : 'Pedido tomado en el mostrador.';
   }
 
+  static String textoDireccionBodega(String solicitante) {
+    final nombre = solicitante.trim();
+    return nombre.isNotEmpty
+        ? 'Salida de bodega · $nombre'
+        : 'Salida registrada en bodega.';
+  }
+
+  static bool esPedidoBodega(Map<String, dynamic> data) =>
+      data['es_pedido_bodega'] == true || data['metodo_entrega'] == 'bodega';
+
   static bool puedeEditarContenido(String? estado) {
     final e = estado ?? '';
     return e != 'Entregado' && e != 'Cancelado';

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'dart:async';
 import 'package:provider/provider.dart';
 import 'package:angostura_digital/providers/cart_provider.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
@@ -14,6 +15,11 @@ import 'package:angostura_digital/services/notificaciones_pedido_service.dart';
 import 'package:angostura_digital/utils/telefono_obligatorio_utils.dart';
 import 'package:angostura_digital/utils/telefono_local_utils.dart';
 import 'package:angostura_digital/utils/pedido_mostrador_utils.dart';
+import 'package:angostura_digital/utils/red_timeout.dart';
+import 'package:angostura_digital/utils/auth_red_precalentar.dart';
+import 'package:angostura_digital/utils/red_diagnostico.dart';
+import 'package:angostura_digital/services/firestore_grpc_service.dart';
+import 'package:angostura_digital/screens/menu_negocio_screen.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -22,8 +28,13 @@ import 'package:geolocator/geolocator.dart';
 class CarritoScreen extends StatefulWidget {
   /// Pedido tomado por trabajador/dueño en el local (sin ubicación ni teléfono del cliente).
   final bool modoMostrador;
+  final String? categoriaNegocio;
 
-  const CarritoScreen({super.key, this.modoMostrador = false});
+  const CarritoScreen({
+    super.key,
+    this.modoMostrador = false,
+    this.categoriaNegocio,
+  });
 
   @override
   State<CarritoScreen> createState() => _CarritoScreenState();
@@ -35,6 +46,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
 
   GeoPoint? _coordenadasEntrega;
   GeoPoint? _negocioUbicacionGeo;
+  String _negocioNombre = '';
 
   bool _cargandoDatos = true;
   bool _permiteRecoger = false;
@@ -43,6 +55,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
 
   double _costoPorKm = 0;
   double _envioMinimo = 0;
+  bool _envioDomicilioConfigurado = false;
   double? _distanciaMaximaKm;
   double? _distanciaKm;
   double? _distanciaKmCobro;
@@ -60,7 +73,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
   ComisionAppConfig _comisionConfig = const ComisionAppConfig();
   double? _ultimoSubtotalComision;
 
-  bool get _envioPorDistancia => _costoPorKm > 0 && _negocioUbicacionGeo != null;
+  bool get _envioPorDistancia =>
+      _envioDomicilioConfigurado && _negocioUbicacionGeo != null;
+  bool get _envioGratis => _envioPorDistancia && _costoPorKm <= 0;
   bool get _domicilioDisponible => _envioPorDistancia;
 
   String _categoriaNegocio = '';
@@ -71,7 +86,14 @@ class _CarritoScreenState extends State<CarritoScreen> {
   final TextEditingController _notasMostradorCtrl = TextEditingController();
   String? _errorTelefonoMostrador;
 
+  bool _enviandoPedido = false;
+  String _estadoEnvioPedido = '';
+
   bool get _esMostrador => widget.modoMostrador;
+  bool get _esBodega => CategoriasNegocio.esBodega(
+        widget.categoriaNegocio ?? _categoriaNegocio,
+      );
+  bool get _esBodegaSalida => _esMostrador && _esBodega;
 
   @override
   void initState() {
@@ -101,6 +123,10 @@ class _CarritoScreenState extends State<CarritoScreen> {
   }
 
   Future<void> _cargarDatosIniciales() async {
+    unawaited(precalentarRedFirebase());
+    unawaited(RedDiagnostico.ejecutar(
+      contexto: _esMostrador ? 'carrito_trabajador' : 'carrito_cliente',
+    ));
     final cart = Provider.of<CartProvider>(context, listen: false);
 
     if (cart.negocioIdActual != null) {
@@ -109,9 +135,11 @@ class _CarritoScreenState extends State<CarritoScreen> {
       if (negDoc.exists) {
         final data = negDoc.data()!;
         _permiteRecoger = data['permite_recoger'] ?? false;
+        _negocioNombre = data['nombre']?.toString() ?? '';
         _negocioUbicacionGeo = data['ubicacion_geo'] as GeoPoint?;
         _costoPorKm = (data['costo_por_km'] ?? 0).toDouble();
         _envioMinimo = (data['envio_minimo'] ?? 0).toDouble();
+        _envioDomicilioConfigurado = data.containsKey('costo_por_km');
         _distanciaMaximaKm = data['distancia_maxima_km'] != null
             ? (data['distancia_maxima_km'] as num).toDouble()
             : null;
@@ -315,7 +343,30 @@ class _CarritoScreenState extends State<CarritoScreen> {
     return base;
   }
 
-  Future<String?> _guardarPedidoEnFirebase(BuildContext context, CartProvider cart) async {
+  Future<String> _crearPedidoEnFirestore(
+    Map<String, dynamic> datos, {
+    bool forzarRest = false,
+  }) async {
+    final sw = Stopwatch()..start();
+    final id = await FirestoreGrpcService.crearPedido(
+      datos,
+      forzarRest: forzarRest,
+      onProgreso: (msg) {
+        if (mounted) setState(() => _estadoEnvioPedido = msg);
+      },
+    );
+    sw.stop();
+    debugPrint(
+      '🌐 RED [pedido_guardado] OK en ${sw.elapsedMilliseconds} ms (id=$id)',
+    );
+    return id;
+  }
+
+  Future<String?> _guardarPedidoEnFirebase(
+    BuildContext context,
+    CartProvider cart, {
+    bool forzarRest = false,
+  }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return null;
     if (!await TelefonoObligatorioUtils.tieneTelefonoVerificado()) return null;
@@ -325,17 +376,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
     final negocioId = cart.negocioIdActual;
     if (negocioId == null) return null;
 
-    String negocioNombre = 'Negocio';
-    Map<String, dynamic>? negocioData;
-    try {
-      final doc = await FirebaseFirestore.instance.collection('negocios').doc(negocioId).get();
-      if (doc.exists) {
-        negocioData = doc.data();
-        negocioNombre = negocioData?['nombre'] ?? 'Local';
-      }
-    } catch (_) {}
-
-    final config = ComisionAppConfig.desdeMap(negocioData);
+    final negocioNombre =
+        _negocioNombre.isNotEmpty ? _negocioNombre : 'Negocio';
+    final config = _comisionConfig;
     final comisionMonto = ComisionAppUtils.calcularMonto(cart.subtotal, config);
 
     final listaProductos = cart.items.values.map((i) => i.toPedidoMap()).toList();
@@ -349,7 +392,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
                 ? 'Solicitud de servicio a domicilio. El negocio contactará al cliente.'
                 : direccionEntrega;
 
-    final pedidoRef = await FirebaseFirestore.instance.collection('pedidos').add({
+    return await _crearPedidoEnFirestore({
       'cliente_id': user.uid,
       'negocio_id': negocioId,
       'negocio_nombre': negocioNombre,
@@ -400,34 +443,33 @@ class _CarritoScreenState extends State<CarritoScreen> {
           if (_distanciaMaximaKm != null) 'distancia_maxima_km': _distanciaMaximaKm,
         },
       'fecha': FieldValue.serverTimestamp(),
-    });
-
-    return pedidoRef.id;
+    }, forzarRest: forzarRest);
   }
 
-  Future<String?> _guardarPedidoMostrador(BuildContext context, CartProvider cart) async {
+  Future<String?> _guardarPedidoMostrador(
+    BuildContext context,
+    CartProvider cart, {
+    bool forzarRest = false,
+  }) async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return null;
 
     final negocioId = cart.negocioIdActual;
     if (negocioId == null) return null;
 
-    String negocioNombre = 'Negocio';
-    Map<String, dynamic>? negocioData;
-    String creadoPorNombre = 'Personal';
-    try {
-      final doc = await FirebaseFirestore.instance.collection('negocios').doc(negocioId).get();
-      if (doc.exists) {
-        negocioData = doc.data();
-        negocioNombre = negocioData?['nombre'] ?? 'Local';
-      }
-      final userDoc = await FirebaseFirestore.instance.collection('usuarios').doc(user.uid).get();
-      if (userDoc.exists) {
-        creadoPorNombre = (userDoc.data()?['nombre'] ?? creadoPorNombre).toString();
-      }
-    } catch (_) {}
+    final negocioNombre =
+        _negocioNombre.isNotEmpty ? _negocioNombre : 'Negocio';
+    var creadoPorNombre = user.displayName ?? 'Personal';
+    final userDoc = await conTimeoutRed(
+      FirebaseFirestore.instance.collection('usuarios').doc(user.uid).get(),
+      limite: const Duration(seconds: 10),
+    );
+    if (userDoc != null && userDoc.exists) {
+      creadoPorNombre =
+          (userDoc.data()?['nombre'] ?? creadoPorNombre).toString();
+    }
 
-    final config = ComisionAppConfig.desdeMap(negocioData);
+    final config = _comisionConfig;
     final comisionMonto = ComisionAppUtils.calcularMonto(cart.subtotal, config);
     final listaProductos = cart.items.values.map((i) => i.toPedidoMap()).toList();
 
@@ -436,7 +478,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
     final notas = _notasMostradorCtrl.text.trim();
     if (!TelefonoLocalUtils.esValidoOpcional(_clienteTelefonoCtrl.text)) return null;
 
-    final pedidoRef = await FirebaseFirestore.instance.collection('pedidos').add({
+    return await _crearPedidoEnFirestore({
       'es_pedido_mostrador': true,
       'negocio_id': negocioId,
       'negocio_nombre': negocioNombre,
@@ -461,9 +503,65 @@ class _CarritoScreenState extends State<CarritoScreen> {
       'metodo_entrega': 'mostrador',
       'direccion': PedidoMostradorUtils.textoDireccionMostrador(clienteNombre),
       'fecha': FieldValue.serverTimestamp(),
-    });
+    }, forzarRest: forzarRest);
+  }
 
-    return pedidoRef.id;
+  Future<String?> _guardarPedidoBodega(
+    BuildContext context,
+    CartProvider cart, {
+    bool forzarRest = false,
+  }) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return null;
+
+    final negocioId = cart.negocioIdActual;
+    if (negocioId == null) return null;
+
+    final negocioNombre =
+        _negocioNombre.isNotEmpty ? _negocioNombre : 'Bodega';
+    var creadoPorNombre = user.displayName ?? 'Personal';
+    final userDoc = await conTimeoutRed(
+      FirebaseFirestore.instance.collection('usuarios').doc(user.uid).get(),
+      limite: const Duration(seconds: 10),
+    );
+    if (userDoc != null && userDoc.exists) {
+      creadoPorNombre =
+          (userDoc.data()?['nombre'] ?? creadoPorNombre).toString();
+    }
+
+    final listaProductos = cart.items.values.map((i) {
+      final m = i.toPedidoMap();
+      m['precio'] = 0;
+      return m;
+    }).toList();
+
+    final solicitante = _clienteNombreCtrl.text.trim();
+    final telefono = TelefonoLocalUtils.normalizar(_clienteTelefonoCtrl.text);
+    final notas = _notasMostradorCtrl.text.trim();
+    if (!TelefonoLocalUtils.esValidoOpcional(_clienteTelefonoCtrl.text)) return null;
+
+    return await _crearPedidoEnFirestore({
+      'es_pedido_mostrador': true,
+      'es_pedido_bodega': true,
+      'negocio_id': negocioId,
+      'negocio_nombre': negocioNombre,
+      'categoria_negocio': CategoriasNegocio.bodega,
+      'creado_por_uid': user.uid,
+      'creado_por_nombre': creadoPorNombre,
+      if (solicitante.isNotEmpty) 'cliente_nombre': solicitante,
+      if (telefono.isNotEmpty) 'cliente_telefono': telefono,
+      'productos': listaProductos,
+      'subtotal': 0,
+      'costo_envio': 0,
+      'comision_app': 0,
+      'total': 0,
+      'estado': 'Pendiente',
+      'notas': notas,
+      'metodo_pago': 'sin_cobro',
+      'metodo_entrega': 'bodega',
+      'direccion': PedidoMostradorUtils.textoDireccionBodega(solicitante),
+      'fecha': FieldValue.serverTimestamp(),
+    }, forzarRest: forzarRest);
   }
 
   Future<void> _guardarDireccionClienteTrasPedido() async {
@@ -490,6 +588,8 @@ class _CarritoScreenState extends State<CarritoScreen> {
   }
 
   Future<void> _intentarConfirmarPedido(BuildContext context, CartProvider cart) async {
+    if (_enviandoPedido) return;
+
     if (_esMostrador) {
       _validarTelefonoMostrador();
       if (_errorTelefonoMostrador != null) {
@@ -512,50 +612,126 @@ class _CarritoScreenState extends State<CarritoScreen> {
   }
 
   Future<void> _procesarPedido(BuildContext context, CartProvider cart) async {
-    bool loaderAbierto = true;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
+    if (_enviandoPedido) return;
+
+    setState(() {
+      _enviandoPedido = true;
+      _estadoEnvioPedido = 'Verificando conexión...';
+    });
 
     try {
-      if (loaderAbierto && context.mounted) {
-        Navigator.pop(context);
-        loaderAbierto = false;
+      final contextoRed = _esMostrador
+          ? (_esBodega ? 'pedido_bodega' : 'pedido_trabajador')
+          : 'pedido_cliente';
+
+      final RedInforme red;
+      if (FirestoreGrpcService.usarRestDirecto) {
+        debugPrint('🔌 Fail-fast: sin prueba gRPC pre-pedido → REST directo');
+        red = RedInforme(
+          tipoConexion: await RedDiagnostico.tipoConexionActual(),
+          calidadGeneral: 'rest_directo',
+          pruebas: const [
+            RedPrueba(
+              nombre: 'firestore',
+              ms: null,
+              calidad: 'omitido (fail-fast)',
+              ok: false,
+            ),
+          ],
+          appCheckOk: true,
+          fecha: DateTime.now(),
+        );
+      } else {
+        red = await RedDiagnostico.ejecutar(contexto: contextoRed);
       }
+
+      if (!red.hayConexion) {
+        throw Exception(
+          'Sin conexión a internet. Activa WiFi o datos móviles e intenta de nuevo.',
+        );
+      }
+
+      if (mounted) {
+        final usarHttp = !red.grpcOperativo || FirestoreGrpcService.usarRestDirecto;
+        setState(() {
+          _estadoEnvioPedido = usarHttp
+              ? 'Enviando por HTTP (gRPC no disponible)...'
+              : 'Enviando pedido...';
+        });
+      }
+
+      final forzarRest = FirestoreGrpcService.usarRestDirecto || !red.grpcOperativo;
 
       final pedidoId = _esMostrador
-          ? await _guardarPedidoMostrador(context, cart)
-          : await _guardarPedidoEnFirebase(context, cart);
-      if (!_esMostrador) {
-        await _guardarDireccionClienteTrasPedido();
-        if (pedidoId != null) {
-          await NotificacionesPedidoService.solicitarAvisoDueno(pedidoId);
-        }
+          ? (_esBodega
+              ? await _guardarPedidoBodega(context, cart, forzarRest: forzarRest)
+              : await _guardarPedidoMostrador(context, cart, forzarRest: forzarRest))
+          : await _guardarPedidoEnFirebase(context, cart, forzarRest: forzarRest);
+
+      if (pedidoId == null) {
+        throw Exception(
+          'No se pudo registrar el pedido. Revisa tu conexión e intenta de nuevo.',
+        );
       }
 
-      if (context.mounted) {
+      if (!_esMostrador) {
+        enSegundoPlano(
+          _guardarDireccionClienteTrasPedido(),
+          limite: const Duration(seconds: 12),
+        );
+        enSegundoPlano(
+          NotificacionesPedidoService.solicitarAvisoDueno(pedidoId),
+          limite: const Duration(seconds: 15),
+        );
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _esBodegaSalida
+                ? 'Salida registrada en bodega.'
+                : (_esMostrador
+                    ? 'Pedido registrado en el local.'
+                    : '¡Pedido enviado!'),
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+      cart.limpiarCarrito();
+      if (_esMostrador) {
+        Navigator.of(context).pop();
+        if (mounted) Navigator.of(context).pop();
+      } else {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
+    } on TimeoutException catch (e) {
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(_esMostrador ? 'Pedido registrado en el local.' : '¡Pedido enviado!'),
-            backgroundColor: Colors.green,
+            content: Text(
+              e.message ??
+                  'La conexión tardó demasiado. Espera un momento e intenta de nuevo.',
+            ),
+            backgroundColor: Colors.redAccent,
           ),
         );
-        cart.limpiarCarrito();
-        if (_esMostrador) {
-          Navigator.of(context).pop();
-          if (context.mounted) Navigator.of(context).pop();
-        } else {
-          Navigator.of(context).popUntil((route) => route.isFirst);
-        }
       }
     } catch (e) {
-      if (context.mounted) {
-        if (loaderAbierto) Navigator.pop(context);
+      if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al enviar pedido: $e'), backgroundColor: Colors.redAccent),
+          SnackBar(
+            content: Text('Error al enviar pedido: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
         );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _enviandoPedido = false;
+          _estadoEnvioPedido = '';
+        });
       }
     }
   }
@@ -574,6 +750,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
 
   bool _puedePedir(CartProvider cart) {
     if (cart.items.isEmpty) return false;
+    if (_esBodegaSalida) {
+      return TelefonoLocalUtils.esValidoOpcional(_clienteTelefonoCtrl.text);
+    }
     if (_esMostrador) {
       return _pagoValido(cart) &&
           TelefonoLocalUtils.esValidoOpcional(_clienteTelefonoCtrl.text);
@@ -590,6 +769,12 @@ class _CarritoScreenState extends State<CarritoScreen> {
 
   String _obtenerTextoBoton(CartProvider cart) {
     if (cart.items.isEmpty) return 'Carrito vacío';
+    if (_esBodegaSalida) {
+      if (!TelefonoLocalUtils.esValidoOpcional(_clienteTelefonoCtrl.text)) {
+        return 'Teléfono: 10 dígitos';
+      }
+      return 'Registrar salida';
+    }
     if (_esMostrador) {
       if (!TelefonoLocalUtils.esValidoOpcional(_clienteTelefonoCtrl.text)) {
         return 'Teléfono: 10 dígitos';
@@ -607,6 +792,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
       if (_fueraDeRango) return 'Fuera del rango de entrega';
       if (!_tieneUbicacionConfirmada()) return 'Marca tu ubicación arriba';
       if (!_envioPorDistancia) return 'Sin envío a domicilio';
+      if (_envioGratis) return 'Marca tu ubicación (envío gratis)';
     }
     if (_metodoPagoSeleccionado == null) return 'Elige cómo vas a pagar';
     if (!_pagoValido(cart)) return 'Monto en efectivo insuficiente';
@@ -697,7 +883,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
             if (_distanciaKmCobro != null) ...[
               const SizedBox(height: 4),
               Text(
-                'Distancia: ${_distanciaKmCobro!.toStringAsFixed(2)} km · Envío: \$${costoEnvio.toStringAsFixed(0)}',
+                _envioGratis
+                    ? 'Distancia: ${_distanciaKmCobro!.toStringAsFixed(2)} km · Envío gratis'
+                    : 'Distancia: ${_distanciaKmCobro!.toStringAsFixed(2)} km · Envío: \$${costoEnvio.toStringAsFixed(0)}',
                 style: TextStyle(fontSize: 14, color: Colors.green.shade900, fontWeight: FontWeight.w600),
               ),
             ],
@@ -751,7 +939,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
               Text(
                 _fueraDeRango
                     ? 'Estás a ${_distanciaKm!.toStringAsFixed(1)} km — fuera del rango de entrega.'
-                    : 'Tu envío (${_distanciaKmCobro!.toStringAsFixed(2)} km): \$${costoEnvio.toStringAsFixed(0)}',
+                    : (_envioGratis
+                        ? 'Tu envío (${_distanciaKmCobro!.toStringAsFixed(2)} km): gratis'
+                        : 'Tu envío (${_distanciaKmCobro!.toStringAsFixed(2)} km): \$${costoEnvio.toStringAsFixed(0)}'),
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 14,
@@ -848,7 +1038,41 @@ class _CarritoScreenState extends State<CarritoScreen> {
             style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
           ),
           const SizedBox(height: 12),
+          _botonAgregarMas(cart),
         ],
+      ),
+    );
+  }
+
+  Widget _botonAgregarMas(CartProvider cart) {
+    final negocioId = cart.negocioIdActual;
+    if (negocioId == null) return const SizedBox.shrink();
+
+    return OutlinedButton.icon(
+      onPressed: () => _irAMenuNegocio(cart),
+      icon: const Icon(Icons.add_shopping_cart),
+      label: const Text('Agregar más cosas'),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size(double.infinity, 44),
+        foregroundColor: globals.colorFondo,
+        side: BorderSide(color: globals.colorFondo.withValues(alpha: 0.5)),
+      ),
+    );
+  }
+
+  void _irAMenuNegocio(CartProvider cart) {
+    final negocioId = cart.negocioIdActual;
+    if (negocioId == null) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MenuNegocioScreen(
+          negocioId: negocioId,
+          nombreNegocio: _negocioNombre.isNotEmpty ? _negocioNombre : 'Menú',
+          modoTrabajador: _esMostrador,
+          categoriaNegocio: widget.categoriaNegocio ?? _categoriaNegocio,
+        ),
       ),
     );
   }
@@ -880,10 +1104,14 @@ class _CarritoScreenState extends State<CarritoScreen> {
                 _domicilioDisponible &&
                 !_ubicacionListaConfirmada));
 
-    return Scaffold(
+    return Stack(
+      children: [
+        Scaffold(
       appBar: AppBar(
         title: Text(
-          _esMostrador ? 'Pedido en local' : 'Tu Pedido',
+          _esBodegaSalida
+              ? 'Salida de bodega'
+              : (_esMostrador ? 'Pedido en local' : 'Tu Pedido'),
           style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         backgroundColor: globals.colorFondo,
@@ -901,6 +1129,10 @@ class _CarritoScreenState extends State<CarritoScreen> {
                         controller: _scrollController,
                         padding: const EdgeInsets.all(10),
                         children: [
+                          if (!mostrarProductos && cart.negocioIdActual != null) ...[
+                            _botonAgregarMas(cart),
+                            const SizedBox(height: 8),
+                          ],
                           if (_esMostrador) _buildMostradorClienteSection(),
                           if (!_esMostrador && !_telefonoVerificado)
                             Container(
@@ -1129,13 +1361,14 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                                 fontWeight: FontWeight.w500,
                                               ),
                                             ),
-                                          Text(
-                                            '\$${item.precio.toStringAsFixed(2)}',
-                                            style: const TextStyle(
-                                              color: Colors.green,
-                                              fontWeight: FontWeight.bold,
+                                          if (!_esBodegaSalida)
+                                            Text(
+                                              '\$${item.precio.toStringAsFixed(2)}',
+                                              style: const TextStyle(
+                                                color: Colors.green,
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                             ),
-                                          ),
                                           if (item.esServicio &&
                                               item.tipoServicio == 'cita' &&
                                               item.citaInicio != null) ...[
@@ -1209,7 +1442,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
                             );
                           }),
                             const SizedBox(height: 14),
-                            _seccionMetodoPago(),
+                            if (!_esBodegaSalida) _seccionMetodoPago(),
                           ],
                         ],
                       ),
@@ -1223,24 +1456,38 @@ class _CarritoScreenState extends State<CarritoScreen> {
                       ),
                       child: Column(
                         children: [
-                          _filaResumen('Subtotal:', '\$${cart.subtotal.toStringAsFixed(2)}', false),
+                          if (!_esBodegaSalida) ...[
+                            _filaResumen('Subtotal:', '\$${cart.subtotal.toStringAsFixed(2)}', false),
                           if (!_esMostrador && _metodoSeleccionado == 'domicilio')
                             _filaResumen(
                               _distanciaKmCobro != null
-                                  ? 'Envío (${_distanciaKmCobro!.toStringAsFixed(2)} km):'
+                                  ? (_envioGratis
+                                      ? 'Envío (${_distanciaKmCobro!.toStringAsFixed(2)} km):'
+                                      : 'Envío (${_distanciaKmCobro!.toStringAsFixed(2)} km):')
                                   : 'Envío:',
-                              '\$${cart.costoEnvio.toStringAsFixed(0)}',
+                              _envioGratis ? 'Gratis' : '\$${cart.costoEnvio.toStringAsFixed(0)}',
                               true,
                             ),
-                          if (cart.comisionApp > 0 && cart.comisionLaPagaCliente)
-                            _filaResumen(
-                              'Uso de la app:',
-                              '\$${cart.comisionApp.toStringAsFixed(2)}',
-                              true,
+                            if (cart.comisionApp > 0 && cart.comisionLaPagaCliente)
+                              _filaResumen(
+                                'Uso de la app:',
+                                '\$${cart.comisionApp.toStringAsFixed(2)}',
+                                true,
+                              ),
+                            const Divider(height: 20, thickness: 2),
+                            _filaResumen('Total:', '\$${cart.total.toStringAsFixed(2)}', false, esTotal: true),
+                            const SizedBox(height: 15),
+                          ] else ...[
+                            Text(
+                              '${cart.items.values.fold<int>(0, (s, i) => s + i.cantidad)} pieza(s) en esta salida',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: Colors.brown,
+                              ),
                             ),
-                          const Divider(height: 20, thickness: 2),
-                          _filaResumen('Total:', '\$${cart.total.toStringAsFixed(2)}', false, esTotal: true),
-                          const SizedBox(height: 15),
+                            const SizedBox(height: 15),
+                          ],
                           SizedBox(
                             width: double.infinity,
                             height: 50,
@@ -1250,11 +1497,13 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                               ),
-                              onPressed: botonActivo
+                              onPressed: botonActivo && !_enviandoPedido
                                   ? () => _intentarConfirmarPedido(context, cart)
                                   : null,
                               child: Text(
-                                _obtenerTextoBoton(cart),
+                                _enviandoPedido
+                                    ? 'Enviando...'
+                                    : _obtenerTextoBoton(cart),
                                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                               ),
                             ),
@@ -1264,6 +1513,54 @@ class _CarritoScreenState extends State<CarritoScreen> {
                     ),
                   ],
                 ),
+        ),
+        if (_enviandoPedido) _overlayEnvioPedido(),
+      ],
+    );
+  }
+
+  Widget _overlayEnvioPedido() {
+    return Positioned.fill(
+      child: AbsorbPointer(
+        child: ColoredBox(
+          color: Colors.black54,
+          child: Center(
+            child: Card(
+              margin: const EdgeInsets.all(32),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 20),
+                    Text(
+                      _estadoEnvioPedido.isNotEmpty
+                          ? _estadoEnvioPedido
+                          : 'Enviando pedido...',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Con datos móviles puede tardar un poco.\nNo vuelvas a tocar el botón.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey.shade700,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1428,44 +1725,53 @@ class _CarritoScreenState extends State<CarritoScreen> {
   }
 
   Widget _buildMostradorClienteSection() {
+    final esBodega = _esBodegaSalida;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.indigo.shade50,
+        color: esBodega ? Colors.brown.shade50 : Colors.indigo.shade50,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.indigo.shade100),
+        border: Border.all(color: esBodega ? Colors.brown.shade100 : Colors.indigo.shade100),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.person_outline, color: Colors.indigo.shade700),
+              Icon(
+                esBodega ? Icons.warehouse_outlined : Icons.person_outline,
+                color: esBodega ? Colors.brown.shade700 : Colors.indigo.shade700,
+              ),
               const SizedBox(width: 8),
               Text(
-                'Cliente (opcional)',
+                esBodega ? 'Solicitante (opcional)' : 'Cliente (opcional)',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 16,
-                  color: Colors.indigo.shade900,
+                  color: esBodega ? Colors.brown.shade900 : Colors.indigo.shade900,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 6),
           Text(
-            'Teléfono opcional: exactamente 10 dígitos. Sin envío a domicilio.',
-            style: TextStyle(fontSize: 12, color: Colors.indigo.shade800),
+            esBodega
+                ? 'Registra quién retira o el motivo. Teléfono opcional (10 dígitos).'
+                : 'Teléfono opcional: exactamente 10 dígitos. Sin envío a domicilio.',
+            style: TextStyle(
+              fontSize: 12,
+              color: esBodega ? Colors.brown.shade800 : Colors.indigo.shade800,
+            ),
           ),
           const SizedBox(height: 12),
           TextField(
             controller: _clienteNombreCtrl,
             textCapitalization: TextCapitalization.words,
             decoration: InputDecoration(
-              labelText: 'Nombre del cliente',
-              hintText: 'Ej. Juan, Mesa 3',
+              labelText: esBodega ? 'Nombre o área' : 'Nombre del cliente',
+              hintText: esBodega ? 'Ej. Taller, Juan' : 'Ej. Juan, Mesa 3',
               prefixIcon: const Icon(Icons.badge_outlined),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
               filled: true,
@@ -1495,8 +1801,8 @@ class _CarritoScreenState extends State<CarritoScreen> {
             controller: _notasMostradorCtrl,
             maxLines: 2,
             decoration: InputDecoration(
-              labelText: 'Notas del pedido',
-              hintText: 'Ej. Para llevar, sin picante',
+              labelText: esBodega ? 'Motivo / notas' : 'Notas del pedido',
+              hintText: esBodega ? 'Ej. Para reparación, pedido #12' : 'Ej. Para llevar, sin picante',
               prefixIcon: const Icon(Icons.notes),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
               filled: true,

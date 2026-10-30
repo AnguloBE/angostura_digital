@@ -38,6 +38,7 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
 
   /// 'cita' = con calendario; 'solicitud' = el negocio contacta después.
   String _tipoServicio = 'cita';
+  bool _destacado = false;
 
   @override
   void initState() {
@@ -51,6 +52,7 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
     );
     _fotoUrlExistente = d?['foto_url'];
     _tipoServicio = d?['tipo_servicio']?.toString() ?? 'cita';
+    _destacado = d?['destacado'] == true;
   }
 
   @override
@@ -96,6 +98,7 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
         'es_servicio': true,
         'tipo_servicio': _tipoServicio,
         'duracion_minutos': _tipoServicio == 'cita' ? duracion : 0,
+        'destacado': _destacado,
         'categoria_negocio': 'Servicios',
       };
 
@@ -190,7 +193,17 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
                 border: OutlineInputBorder(),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Destacar en el menú'),
+              subtitle: const Text('Aparece primero en la lista de servicios'),
+              value: _destacado,
+              activeThumbColor: Colors.amber.shade800,
+              secondary: Icon(Icons.star_rounded, color: Colors.amber.shade700),
+              onChanged: (v) => setState(() => _destacado = v),
+            ),
+            const SizedBox(height: 12),
             const Text(
               'Tipo de servicio',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),

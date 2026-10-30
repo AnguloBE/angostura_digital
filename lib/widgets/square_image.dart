@@ -14,7 +14,7 @@ class SquareImage extends StatelessWidget {
     this.placeholder,
     this.color,
     this.colorBlendMode,
-    this.useCachedNetwork = false,
+    this.useCachedNetwork = true,
   });
 
   final String? imageUrl;
@@ -32,7 +32,7 @@ class SquareImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Widget child = _hasImage ? _buildImage() : _buildPlaceholder();
+    final Widget child = _hasImage ? _buildImage(context) : _buildPlaceholder();
 
     final clipped = ClipRRect(borderRadius: borderRadius, child: child);
 
@@ -53,7 +53,7 @@ class SquareImage extends StatelessWidget {
         );
   }
 
-  Widget _buildImage() {
+  Widget _buildImage(BuildContext context) {
     if (imageBytes != null) {
       return Image.memory(
         imageBytes!,
@@ -66,12 +66,17 @@ class SquareImage extends StatelessWidget {
     }
 
     final url = imageUrl!;
+    final memCacheWidth = size != null
+        ? (size! * MediaQuery.devicePixelRatioOf(context)).round()
+        : null;
+
     if (useCachedNetwork) {
       return CachedNetworkImage(
         imageUrl: url,
         fit: BoxFit.cover,
         width: double.infinity,
         height: double.infinity,
+        memCacheWidth: memCacheWidth,
         color: color,
         colorBlendMode: colorBlendMode,
         placeholder: (_, __) => Container(

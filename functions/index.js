@@ -121,7 +121,8 @@ async function enviarPush(token, titulo, cuerpo, data = {}) {
 function esRolNotificable(rol) {
   if (!rol) return false;
   const r = String(rol).toLowerCase();
-  return r === "dueno" || r === "dueño" || r === "trabajador" || r === "owner";
+  return r === "dueno" || r === "dueño" || r === "encargado" ||
+      r === "trabajador" || r === "owner";
 }
 
 async function obtenerUidsNotificarPedido(negocioId, negocioData) {

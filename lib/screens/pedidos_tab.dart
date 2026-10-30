@@ -71,7 +71,11 @@ class PedidosTab extends StatelessWidget {
       body: user == null
           ? const Center(child: Text('Inicia sesión para ver tus pedidos.'))
           : StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('pedidos').where('cliente_id', isEqualTo: user.uid).snapshots(),
+              stream: FirebaseFirestore.instance
+                  .collection('pedidos')
+                  .where('cliente_id', isEqualTo: user.uid)
+                  .limit(50)
+                  .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
                 var pedidos = snapshot.data?.docs.toList() ?? [];

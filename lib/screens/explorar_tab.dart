@@ -11,6 +11,7 @@ import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/utils/tiempo_estimado_utils.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
+import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
 
 class ExplorarTab extends StatefulWidget {
   const ExplorarTab({super.key});
@@ -19,6 +20,10 @@ class ExplorarTab extends StatefulWidget {
 }
 
 class _ExplorarTabState extends State<ExplorarTab> {
+  static const _limiteNegociosPopulares = 50;
+  static const _limiteNegociosBusqueda = 80;
+  static const _limiteProductos = 250;
+
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
   String _categoriaSeleccionada = ''; 
@@ -85,7 +90,7 @@ class _ExplorarTabState extends State<ExplorarTab> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(title: Container(height: 40, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)), child: TextField(controller: _searchController, autofocus: false, decoration: InputDecoration(hintText: 'Buscar hamburguesas, farmacias, capomos...', hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14), prefixIcon: const Icon(Icons.search, color: Colors.grey), suffixIcon: _searchQuery.isNotEmpty || _categoriaSeleccionada.isNotEmpty ? IconButton(icon: const Icon(Icons.clear, color: Colors.grey), onPressed: () { _searchController.clear(); setState(() { _searchQuery = ''; _categoriaSeleccionada = ''; }); }) : null, border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 10)), onChanged: (value) { setState(() { _searchQuery = value.toLowerCase().trim(); _categoriaSeleccionada = ''; }); })), backgroundColor: globals.colorFondo),
+      appBar: AppBar(title: Container(height: 40, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)), child: TextField(controller: _searchController, autofocus: false, decoration: InputDecoration(hintText: 'Buscar producto, ingrediente, 600 ml, local...', hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14), prefixIcon: const Icon(Icons.search, color: Colors.grey), suffixIcon: _searchQuery.isNotEmpty || _categoriaSeleccionada.isNotEmpty ? IconButton(icon: const Icon(Icons.clear, color: Colors.grey), onPressed: () { _searchController.clear(); setState(() { _searchQuery = ''; _categoriaSeleccionada = ''; }); }) : null, border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 10)), onChanged: (value) { setState(() { _searchQuery = value.toLowerCase().trim(); _categoriaSeleccionada = ''; }); })), backgroundColor: globals.colorFondo),
       body: _searchQuery.isEmpty && _categoriaSeleccionada.isEmpty ? _buildEstadoInicial() : _buildResultadosBusqueda(),
     );
   }
@@ -109,11 +114,20 @@ class _ExplorarTabState extends State<ExplorarTab> {
         const SizedBox(height: 30), const Text('Negocios Populares', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)), const SizedBox(height: 15),
         
         StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance.collection('negocios').snapshots(),
+          stream: FirebaseFirestore.instance
+              .collection('negocios')
+              .limit(_limiteNegociosPopulares)
+              .snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
             final negocios = snapshot.data!.docs
-                .where((d) => ComisionAppUtils.visibleParaClientes((d.data() as Map)['estado']?.toString()))
+                .where((d) {
+                  final data = d.data() as Map<String, dynamic>;
+                  if (!CategoriasNegocio.visibleAlPublico(data['categoria']?.toString())) {
+                    return false;
+                  }
+                  return ComisionAppUtils.visibleParaClientes(data['estado']?.toString());
+                })
                 .take(10)
                 .toList();
             if (negocios.isEmpty) return const Text('Próximamente más locales...', style: TextStyle(color: Colors.grey));
@@ -129,17 +143,24 @@ class _ExplorarTabState extends State<ExplorarTab> {
 
   Widget _buildStreamNegocios() {
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('negocios').snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('negocios')
+          .limit(_limiteNegociosBusqueda)
+          .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(strokeWidth: 2));
         final negocios = snapshot.data!.docs.where((doc) {
-          final estado = (doc.data() as Map)['estado']?.toString();
+          final data = doc.data() as Map<String, dynamic>;
+          final estado = data['estado']?.toString();
+          if (!CategoriasNegocio.visibleAlPublico(data['categoria']?.toString())) return false;
           if (!ComisionAppUtils.visibleParaClientes(estado)) return false;
-          if (_categoriaSeleccionada.isNotEmpty) return CategoriasNegocio.normalizar(doc['categoria']) == _categoriaSeleccionada;
-          final nombre = (doc['nombre'] ?? '').toString().toLowerCase(); 
-          // --- AQUÍ AÑADIMOS LA BÚSQUEDA POR UBICACIÓN ---
-          final ubicacion = (doc.data() as Map<String, dynamic>).containsKey('ubicacion') ? (doc['ubicacion'] ?? '').toString().toLowerCase() : '';
-          
+          if (_categoriaSeleccionada.isNotEmpty) {
+            return CategoriasNegocio.normalizar(data['categoria']) == _categoriaSeleccionada;
+          }
+          final nombre = (data['nombre'] ?? '').toString().toLowerCase();
+          final ubicacion = data.containsKey('ubicacion')
+              ? (data['ubicacion'] ?? '').toString().toLowerCase()
+              : '';
           return nombre.contains(_searchQuery) || ubicacion.contains(_searchQuery);
         }).toList();
         if (negocios.isEmpty) return Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Text('No hay locales.', style: TextStyle(color: Colors.grey.shade600)));
@@ -224,14 +245,31 @@ class _ExplorarTabState extends State<ExplorarTab> {
   }
 
   Widget _buildStreamProductos() {
+    if (_searchQuery.length < 2 && _categoriaSeleccionada.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Text(
+          'Escribe al menos 2 letras para buscar productos.',
+          style: TextStyle(color: Colors.grey.shade600),
+        ),
+      );
+    }
+
     return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('productos').snapshots(),
+      stream: FirebaseFirestore.instance
+          .collection('productos')
+          .limit(_limiteProductos)
+          .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(strokeWidth: 2));
         final productos = snapshot.data!.docs.where((doc) {
-          if (_categoriaSeleccionada.isNotEmpty) return CategoriasNegocio.normalizar(doc['categoria_negocio']) == _categoriaSeleccionada;
-          final nombre = (doc['nombre'] ?? '').toString().toLowerCase(); final descripcion = (doc['descripcion'] ?? '').toString().toLowerCase();
-          return nombre.contains(_searchQuery) || descripcion.contains(_searchQuery);
+          final catNeg = doc['categoria_negocio']?.toString();
+          if (!CategoriasNegocio.visibleAlPublico(catNeg)) return false;
+          if (_categoriaSeleccionada.isNotEmpty) {
+            return CategoriasNegocio.normalizar(catNeg) == _categoriaSeleccionada;
+          }
+          final data = doc.data() as Map<String, dynamic>;
+          return coincideBusquedaProducto(data, _searchQuery);
         }).toList();
         if (productos.isEmpty) return Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Text('No encontramos este producto.', style: TextStyle(color: Colors.grey.shade600)));
 

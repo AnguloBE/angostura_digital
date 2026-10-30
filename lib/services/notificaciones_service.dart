@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:angostura_digital/firebase_options.dart';
+import 'package:angostura_digital/utils/red_timeout.dart';
 
 const String canalPedidosId = 'pedidos';
 
@@ -21,39 +23,51 @@ class NotificacionesService {
 
   static Future<void> inicializar() async {
     if (_inicializado) return;
-
-    await _crearCanalAndroid();
-
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosInit = DarwinInitializationSettings();
-    await _local.initialize(
-      settings: const InitializationSettings(android: androidInit, iOS: iosInit),
-    );
-
-    if (Platform.isAndroid) {
-      final androidPlugin =
-          _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
-      await androidPlugin?.requestNotificationsPermission();
-    }
-
-    await _messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
-
-    await _messaging.setForegroundNotificationPresentationOptions(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
-
-    FirebaseMessaging.onMessage.listen(_mostrarNotificacionLocal);
-
-    await _guardarToken();
-    _messaging.onTokenRefresh.listen((_) => _guardarToken());
-
     _inicializado = true;
+
+    try {
+      await _crearCanalAndroid();
+
+      const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosInit = DarwinInitializationSettings();
+      await _local.initialize(
+        settings: const InitializationSettings(android: androidInit, iOS: iosInit),
+      );
+
+      if (Platform.isAndroid) {
+        final androidPlugin =
+            _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+        final permiso = androidPlugin?.requestNotificationsPermission();
+        if (permiso != null) {
+          await conTimeoutRed(permiso, limite: const Duration(seconds: 5));
+        }
+      }
+
+      await conTimeoutRed(
+        _messaging.requestPermission(
+          alert: true,
+          badge: true,
+          sound: true,
+        ),
+        limite: const Duration(seconds: 5),
+      );
+
+      await conTimeoutRed(
+        _messaging.setForegroundNotificationPresentationOptions(
+          alert: true,
+          badge: true,
+          sound: true,
+        ),
+        limite: const Duration(seconds: 3),
+      );
+
+      FirebaseMessaging.onMessage.listen(_mostrarNotificacionLocal);
+
+      enSegundoPlano(_guardarToken());
+      _messaging.onTokenRefresh.listen((_) => enSegundoPlano(_guardarToken()));
+    } catch (_) {
+      _inicializado = false;
+    }
   }
 
   static Future<void> _crearCanalAndroid() async {
@@ -98,15 +112,21 @@ class NotificacionesService {
     if (user == null) return;
 
     try {
-      final token = await _messaging.getToken();
+      final token = await conTimeoutRed(
+        _messaging.getToken(),
+        limite: const Duration(seconds: 10),
+      );
       if (token == null || token.isEmpty) return;
 
-      await FirebaseFirestore.instance.collection('usuarios').doc(user.uid).set(
-        {
-          'fcm_token': token,
-          'fcm_actualizado': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
+      await conTimeoutRed(
+        FirebaseFirestore.instance.collection('usuarios').doc(user.uid).set(
+          {
+            'fcm_token': token,
+            'fcm_actualizado': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        ),
+        limite: const Duration(seconds: 6),
       );
     } catch (_) {}
   }
@@ -114,15 +134,18 @@ class NotificacionesService {
   static Future<void> cerrarSesion() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user != null) {
-      try {
-        await FirebaseFirestore.instance.collection('usuarios').doc(user.uid).set(
+      await conTimeoutRed(
+        FirebaseFirestore.instance.collection('usuarios').doc(user.uid).set(
           {'fcm_token': FieldValue.delete()},
           SetOptions(merge: true),
-        );
-      } catch (_) {}
+        ),
+        limite: const Duration(seconds: 4),
+      );
     }
-    try {
-      await _messaging.deleteToken();
-    } catch (_) {}
+    await conTimeoutRed(
+      _messaging.deleteToken(),
+      limite: const Duration(seconds: 4),
+    );
+    _inicializado = false;
   }
 }
