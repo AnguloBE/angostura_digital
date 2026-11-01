@@ -5,7 +5,8 @@ import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/widgets/pedido_producto_linea.dart';
 import 'package:angostura_digital/utils/tiempo_estimado_utils.dart';
 import 'package:angostura_digital/utils/pedido_servicios_utils.dart';
-import 'package:url_launcher/url_launcher.dart'; // IMPORTANTE PARA EL MAPA
+import 'package:url_launcher/url_launcher.dart';
+import 'package:angostura_digital/widgets/editar_telefono_dialog.dart';
 
 class PedidosTab extends StatelessWidget {
   const PedidosTab({super.key});
@@ -60,16 +61,41 @@ class PedidosTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-
-    return Scaffold(
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.userChanges(),
+      initialData: FirebaseAuth.instance.currentUser,
+      builder: (context, authSnap) {
+        final user = authSnap.data;
+        return Scaffold(
       appBar: AppBar(
         title: const Text('Mis pedidos y citas', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: globals.colorFondo,
         foregroundColor: Colors.white,
       ),
-      body: user == null
-          ? const Center(child: Text('Inicia sesión para ver tus pedidos.'))
+      body: (user == null || user.isAnonymous)
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.phone_android, size: 72, color: Colors.grey.shade300),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Entra con tu teléfono para ver tus pedidos.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey.shade700, fontSize: 16),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: () => EditarTelefonoDialog.mostrar(context, ingresar: true),
+                      icon: const Icon(Icons.sms_outlined),
+                      label: const Text('Entrar con teléfono'),
+                    ),
+                  ],
+                ),
+              ),
+            )
           : StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('pedidos')
@@ -239,6 +265,8 @@ class PedidosTab extends StatelessWidget {
                 );
               },
             ),
+        );
+      },
     );
   }
 }

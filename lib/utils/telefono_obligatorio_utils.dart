@@ -29,8 +29,8 @@ class TelefonoObligatorioUtils {
       builder: (ctx) => AlertDialog(
         title: const Text('Verifica tu teléfono'),
         content: const Text(
-          'Para hacer pedidos o reservar citas necesitamos tu número de celular.\n\n'
-          'Te enviaremos un SMS con un código, igual que al registrarte.',
+          'Para hacer pedidos o reservar citas entra con tu celular.\n\n'
+          'Te enviaremos un SMS con un código. Si ya tienes cuenta, entras; si no, se crea.',
         ),
         actions: [
           TextButton(
@@ -47,7 +47,11 @@ class TelefonoObligatorioUtils {
 
     if (continuar != true || !context.mounted) return false;
 
-    final ok = await EditarTelefonoDialog.mostrar(context);
+    final user = FirebaseAuth.instance.currentUser;
+    final ok = await EditarTelefonoDialog.mostrar(
+      context,
+      ingresar: user == null || user.isAnonymous,
+    );
     if (!ok) return false;
 
     return tieneTelefonoVerificado();

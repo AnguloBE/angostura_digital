@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:angostura_digital/providers/cart_provider.dart';
 import 'package:angostura_digital/screens/menu_negocio_screen.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
+import 'package:angostura_digital/widgets/drawer.dart';
 import 'package:angostura_digital/utils/producto_pedido_utils.dart';
 import 'package:angostura_digital/services/negocio_ingrediente_service.dart';
 import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
@@ -12,6 +13,7 @@ import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/utils/tiempo_estimado_utils.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
+import 'package:angostura_digital/utils/cuadricula_ancho.dart';
 
 class ExplorarTab extends StatefulWidget {
   const ExplorarTab({super.key});
@@ -90,7 +92,8 @@ class _ExplorarTabState extends State<ExplorarTab> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      appBar: AppBar(title: Container(height: 40, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)), child: TextField(controller: _searchController, autofocus: false, decoration: InputDecoration(hintText: 'Buscar producto, ingrediente, 600 ml, local...', hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14), prefixIcon: const Icon(Icons.search, color: Colors.grey), suffixIcon: _searchQuery.isNotEmpty || _categoriaSeleccionada.isNotEmpty ? IconButton(icon: const Icon(Icons.clear, color: Colors.grey), onPressed: () { _searchController.clear(); setState(() { _searchQuery = ''; _categoriaSeleccionada = ''; }); }) : null, border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 10)), onChanged: (value) { setState(() { _searchQuery = value.toLowerCase().trim(); _categoriaSeleccionada = ''; }); })), backgroundColor: globals.colorFondo),
+      drawer: const DrawerPrincipal(),
+      appBar: AppBar(iconTheme: const IconThemeData(color: Colors.white), title: Container(height: 40, decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)), child: TextField(controller: _searchController, autofocus: false, decoration: InputDecoration(hintText: 'Buscar producto, ingrediente, 600 ml, local...', hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14), prefixIcon: const Icon(Icons.search, color: Colors.grey), suffixIcon: _searchQuery.isNotEmpty || _categoriaSeleccionada.isNotEmpty ? IconButton(icon: const Icon(Icons.clear, color: Colors.grey), onPressed: () { _searchController.clear(); setState(() { _searchQuery = ''; _categoriaSeleccionada = ''; }); }) : null, border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 10)), onChanged: (value) { setState(() { _searchQuery = value.toLowerCase().trim(); _categoriaSeleccionada = ''; }); })), backgroundColor: globals.colorFondo),
       body: _searchQuery.isEmpty && _categoriaSeleccionada.isEmpty ? _buildEstadoInicial() : _buildResultadosBusqueda(),
     );
   }
@@ -131,7 +134,7 @@ class _ExplorarTabState extends State<ExplorarTab> {
                 .take(10)
                 .toList();
             if (negocios.isEmpty) return const Text('Próximamente más locales...', style: TextStyle(color: Colors.grey));
-            return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 600), child: Column(children: negocios.map((doc) => _tarjetaNegocio(doc)).toList())));
+            return Column(children: negocios.map((doc) => _tarjetaNegocio(doc)).toList());
           },
         ),
       ],
@@ -164,7 +167,7 @@ class _ExplorarTabState extends State<ExplorarTab> {
           return nombre.contains(_searchQuery) || ubicacion.contains(_searchQuery);
         }).toList();
         if (negocios.isEmpty) return Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Text('No hay locales.', style: TextStyle(color: Colors.grey.shade600)));
-        return Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 600), child: Column(children: negocios.map((doc) => _tarjetaNegocio(doc)).toList())));
+        return Column(children: negocios.map((doc) => _tarjetaNegocio(doc)).toList());
       },
     );
   }
@@ -276,9 +279,9 @@ class _ExplorarTabState extends State<ExplorarTab> {
         return Center(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              double maxW = constraints.maxWidth; if (maxW.isInfinite || maxW <= 0) maxW = MediaQuery.of(context).size.width - 32;
-              int crossAxisCount = (maxW / 180).ceil(); if (crossAxisCount < 2) crossAxisCount = 2; 
-              final double spacing = 12; final double totalSpacing = spacing * (crossAxisCount - 1); final double itemWidth = (maxW - totalSpacing) / crossAxisCount;
+              double maxW = constraints.maxWidth; if (maxW.isInfinite || maxW <= 0) maxW = MediaQuery.sizeOf(context).width - 32;
+              const spacing = 12.0;
+              final itemWidth = anchoTarjetaCuadricula(maxW, spacing: spacing);
 
               return Wrap(
                 spacing: spacing, runSpacing: spacing,

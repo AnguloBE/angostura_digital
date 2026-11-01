@@ -15,6 +15,7 @@ import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/widgets/reservar_cita_sheet.dart';
 import 'package:angostura_digital/utils/orden_productos_utils.dart';
 import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
+import 'package:angostura_digital/utils/cuadricula_ancho.dart';
 
 class MenuNegocioScreen extends StatefulWidget {
   final String negocioId;
@@ -417,9 +418,9 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                       child: Center(
                         child: LayoutBuilder(
                           builder: (context, constraints) {
-                            double maxW = constraints.maxWidth; if (maxW.isInfinite || maxW <= 0) maxW = MediaQuery.of(context).size.width - 32;
-                            int crossAxisCount = (maxW / 180).ceil(); if (crossAxisCount < 2) crossAxisCount = 2; 
-                            final double spacing = 12; final double totalSpacing = spacing * (crossAxisCount - 1); final double itemWidth = (maxW - totalSpacing) / crossAxisCount;
+                            double maxW = constraints.maxWidth; if (maxW.isInfinite || maxW <= 0) maxW = MediaQuery.sizeOf(context).width - 32;
+                            const spacing = 12.0;
+                            final itemWidth = anchoTarjetaCuadricula(maxW, spacing: spacing);
 
                             return Wrap(
                               spacing: spacing, runSpacing: spacing,

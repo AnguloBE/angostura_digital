@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
@@ -46,6 +47,14 @@ class MyApp extends StatelessWidget {
         navigatorKey: appNavigatorKey,
         title: 'Angostura Digital',
         debugShowCheckedModeBanner: false,
+        scrollBehavior: const MaterialScrollBehavior().copyWith(
+          dragDevices: {
+            PointerDeviceKind.touch,
+            PointerDeviceKind.mouse,
+            PointerDeviceKind.stylus,
+            PointerDeviceKind.trackpad,
+          },
+        ),
         theme: ThemeData(
           useMaterial3: true,
           primarySwatch: Colors.blue,

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 /// Precalienta TLS y DNS hacia los servicios de Firebase (útil en 4G frío).
 Future<void> precalentarRedFirebase() async {
+  if (kIsWeb) return;
   final apiKey = DefaultFirebaseOptions.currentPlatform.apiKey;
   final urls = [
     'https://identitytoolkit.googleapis.com/v1/projects?key=$apiKey',

@@ -125,23 +125,35 @@ class SquarePhotoPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: 1,
-      child: Container(
-        decoration: BoxDecoration(
-          color: backgroundColor ?? Colors.grey.shade200,
-          borderRadius: borderRadius,
-          border: Border.all(color: borderColor ?? Colors.grey.shade400),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: _hasImage
-            ? SquareImage(
-                imageBytes: imageBytes,
-                imageUrl: imageUrl,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxW = constraints.maxWidth;
+        // En teléfono ocupa el ancho del formulario. En computadora no crece
+        // hasta volverse un cuadrado de toda la pantalla.
+        final lado = !maxW.isFinite || maxW > 460 ? 320.0 : maxW;
+        return Align(
+          alignment: Alignment.center,
+          child: SizedBox(
+            width: lado,
+            height: lado,
+            child: Container(
+              decoration: BoxDecoration(
+                color: backgroundColor ?? Colors.grey.shade200,
                 borderRadius: borderRadius,
-              )
-            : emptyChild,
-      ),
+                border: Border.all(color: borderColor ?? Colors.grey.shade400),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: _hasImage
+                  ? SquareImage(
+                      imageBytes: imageBytes,
+                      imageUrl: imageUrl,
+                      borderRadius: borderRadius,
+                    )
+                  : emptyChild,
+            ),
+          ),
+        );
+      },
     );
   }
 }

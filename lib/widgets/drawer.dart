@@ -78,6 +78,57 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
     );
   }
 
+  Future<void> _entrarConTelefono() async {
+    final ok = await EditarTelefonoDialog.mostrar(context, ingresar: true);
+    if (ok && mounted) setState(() {});
+  }
+
+  Widget _drawerInvitado() {
+    return Drawer(
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: EdgeInsets.fromLTRB(16, MediaQuery.of(context).padding.top + 28, 16, 20),
+            color: globals.colorFondo,
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Invitado',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 8),
+                Text(
+                  'Puedes ver los negocios. Para pedir o ver tus pedidos, entra con tu teléfono.',
+                  style: TextStyle(color: Colors.white70, height: 1.35),
+                ),
+              ],
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.phone_android, color: Colors.green),
+            title: const Text(
+              'Entrar con teléfono',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: const Text('Te llega un SMS con el código'),
+            onTap: () {
+              Navigator.pop(context);
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _entrarConTelefono();
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _editarTelefono(String telefonoActual) async {
     final ok = await EditarTelefonoDialog.mostrar(
       context,
@@ -256,13 +307,7 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null) {
-      return const Drawer(child: SizedBox.shrink());
-    }
-
+  Widget _drawerCuenta(User user) {
     return StreamBuilder<DocumentSnapshot>(
       stream: FirebaseFirestore.instance.collection('usuarios').doc(user.uid).snapshots(),
       builder: (context, usuarioSnap) {
@@ -415,6 +460,19 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
             ],
           ),
         );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.userChanges(),
+      initialData: FirebaseAuth.instance.currentUser,
+      builder: (context, snap) {
+        final user = snap.data;
+        if (user == null || user.isAnonymous) return _drawerInvitado();
+        return _drawerCuenta(user);
       },
     );
   }

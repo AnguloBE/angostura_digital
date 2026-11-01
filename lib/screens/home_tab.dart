@@ -43,15 +43,20 @@ class HomeTab extends StatelessWidget {
             return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.local_offer, size: 80, color: Colors.grey.shade300), const SizedBox(height: 15), const Text('Aún no hay promociones activas.', style: TextStyle(fontSize: 18, color: Colors.grey))]));
           }
 
-          double screenWidth = MediaQuery.of(context).size.width;
-          double cardWidth = screenWidth < 400 ? screenWidth - 32 : 360;
+          final usable = MediaQuery.sizeOf(context).width - 32;
+          const gap = 16.0;
+          const target = 340.0;
+          var columns = (usable / target).floor();
+          if (columns < 1) columns = 1;
+          if (usable < 560) columns = 1;
+          final cardWidth = (usable - gap * (columns - 1)) / columns;
 
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16),
             child: SizedBox(
               width: double.infinity, 
               child: Wrap(
-                alignment: WrapAlignment.center, spacing: 20, runSpacing: 20,
+                alignment: WrapAlignment.start, spacing: gap, runSpacing: gap,
                 children: promos.map((doc) {
                   final promo = doc.data() as Map<String, dynamic>;
                   

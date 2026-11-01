@@ -25,6 +25,7 @@ bool get appCheckTokenListo => _appCheckTokenListo;
 /// Activa App Check y empieza a precalentar el token en segundo plano.
 
 Future<void> configureAppCheck() async {
+  if (kIsWeb) return;
 
   try {
 

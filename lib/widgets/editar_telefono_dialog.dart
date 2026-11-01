@@ -1,17 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:angostura_digital/services/firebase_service.dart';
 
-/// Verifica un número nuevo con SMS y lo vincula a la cuenta actual.
+/// Verifica un número con SMS.
+/// Con [ingresar], crea la cuenta o entra a la que ya tenga ese número.
 class EditarTelefonoDialog extends StatefulWidget {
-  const EditarTelefonoDialog({super.key, this.telefonoActual = ''});
+  const EditarTelefonoDialog({
+    super.key,
+    this.telefonoActual = '',
+    this.ingresar = false,
+  });
 
   final String telefonoActual;
+  final bool ingresar;
 
-  static Future<bool> mostrar(BuildContext context, {String telefonoActual = ''}) {
+  static Future<bool> mostrar(
+    BuildContext context, {
+    String telefonoActual = '',
+    bool ingresar = false,
+  }) {
     return showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => EditarTelefonoDialog(telefonoActual: telefonoActual),
+      builder: (_) => EditarTelefonoDialog(
+        telefonoActual: telefonoActual,
+        ingresar: ingresar,
+      ),
     ).then((v) => v == true);
   }
 
@@ -41,15 +54,22 @@ class _EditarTelefonoDialogState extends State<EditarTelefonoDialog> {
       return;
     }
     setState(() => _cargando = true);
-    final ok = await AuthService().enviarCodigoVincularTelefono(_telefonoCompleto);
+    final error = await AuthService().enviarCodigoTelefono(
+      _telefonoCompleto,
+      ingresar: widget.ingresar,
+    );
     if (!mounted) return;
+    if (error == null && AuthService.ingresoCompletadoAlEnviar) {
+      Navigator.pop(context, true);
+      return;
+    }
     setState(() {
       _cargando = false;
-      if (ok) {
+      if (error == null) {
         _codeSent = true;
         _mensaje('SMS enviado a $_telefonoCompleto', Colors.green);
       } else {
-        _mensaje('No se pudo enviar el SMS. Revisa el número.', Colors.red);
+        _mensaje(error, Colors.red);
       }
     });
   }
@@ -60,7 +80,10 @@ class _EditarTelefonoDialogState extends State<EditarTelefonoDialog> {
       return;
     }
     setState(() => _cargando = true);
-    final error = await AuthService().confirmarVincularTelefono(_codeCtrl.text.trim());
+    final error = await AuthService().confirmarCodigoTelefono(
+      _codeCtrl.text.trim(),
+      ingresar: widget.ingresar,
+    );
     if (!mounted) return;
     setState(() => _cargando = false);
     if (error == null) {
@@ -79,15 +102,20 @@ class _EditarTelefonoDialogState extends State<EditarTelefonoDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Cambiar teléfono', style: TextStyle(fontWeight: FontWeight.bold)),
+      title: Text(
+        widget.ingresar ? 'Entrar con teléfono' : 'Cambiar teléfono',
+        style: const TextStyle(fontWeight: FontWeight.bold),
+      ),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'Te enviaremos un SMS para confirmar el nuevo número, igual que al registrarte.',
-              style: TextStyle(fontSize: 13, color: Colors.black87),
+            Text(
+              widget.ingresar
+                  ? 'Te enviamos un SMS con un código. Si el número ya está registrado, entras a esa cuenta. Si no, se crea una nueva.'
+                  : 'Te enviaremos un SMS para confirmar el nuevo número.',
+              style: const TextStyle(fontSize: 13, color: Colors.black87),
             ),
             if (widget.telefonoActual.isNotEmpty) ...[
               const SizedBox(height: 8),
@@ -166,7 +194,7 @@ class _EditarTelefonoDialogState extends State<EditarTelefonoDialog> {
         else if (_codeSent)
           ElevatedButton(
             onPressed: _confirmarCodigo,
-            child: const Text('Confirmar'),
+            child: Text(widget.ingresar ? 'Entrar' : 'Confirmar'),
           )
         else
           ElevatedButton(

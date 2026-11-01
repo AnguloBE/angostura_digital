@@ -37,13 +37,8 @@ class ReservarCitaSheet extends StatefulWidget {
     Map<String, dynamic>? datosNegocio,
   }) async {
     if (FirebaseAuth.instance.currentUser == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Inicia sesión para reservar una cita.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return false;
+      final ok = await TelefonoObligatorioUtils.solicitarVerificacion(context);
+      if (!ok || !context.mounted) return false;
     }
 
     final resultado = await showModalBottomSheet<bool>(

@@ -109,7 +109,7 @@ class NotificacionesService {
 
   static Future<void> _guardarToken() async {
     final user = FirebaseAuth.instance.currentUser;
-    if (user == null) return;
+    if (user == null || user.isAnonymous) return;
 
     try {
       final token = await conTimeoutRed(
