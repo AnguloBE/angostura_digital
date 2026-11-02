@@ -6,6 +6,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/utils/mobile_image_utils.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
+import 'package:angostura_digital/widgets/selector_seccion.dart';
+import 'package:angostura_digital/utils/seccion_producto_utils.dart';
 
 /// Alta/edición de un servicio (cita con calendario o solicitud a domicilio).
 class AgregarServicioScreen extends StatefulWidget {
@@ -39,6 +41,7 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
   /// 'cita' = con calendario; 'solicitud' = el negocio contacta después.
   String _tipoServicio = 'cita';
   bool _destacado = false;
+  String _seccion = '';
 
   @override
   void initState() {
@@ -53,6 +56,7 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
     _fotoUrlExistente = d?['foto_url'];
     _tipoServicio = d?['tipo_servicio']?.toString() ?? 'cita';
     _destacado = d?['destacado'] == true;
+    _seccion = d == null ? '' : seccionProducto(d);
   }
 
   @override
@@ -99,6 +103,7 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
         'tipo_servicio': _tipoServicio,
         'duracion_minutos': _tipoServicio == 'cita' ? duracion : 0,
         'destacado': _destacado,
+        'seccion': _seccion.trim(),
         'categoria_negocio': 'Servicios',
       };
 
@@ -202,6 +207,12 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
               activeThumbColor: Colors.amber.shade800,
               secondary: Icon(Icons.star_rounded, color: Colors.amber.shade700),
               onChanged: (v) => setState(() => _destacado = v),
+            ),
+            const SizedBox(height: 8),
+            SelectorSeccion(
+              negocioId: widget.negocioId,
+              valorInicial: _seccion,
+              onChanged: (v) => _seccion = v,
             ),
             const SizedBox(height: 12),
             const Text(

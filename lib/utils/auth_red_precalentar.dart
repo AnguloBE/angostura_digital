@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:angostura_digital/firebase_options.dart';
 import 'package:angostura_digital/utils/app_check_config.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 /// Precalienta TLS y DNS hacia los servicios de Firebase (útil en 4G frío).
 Future<void> precalentarRedFirebase() async {
@@ -19,17 +19,10 @@ Future<void> precalentarRedFirebase() async {
 }
 
 Future<void> _headRequest(String url) async {
-  final client = HttpClient();
   try {
-    final request = await client
-        .headUrl(Uri.parse(url))
-        .timeout(const Duration(seconds: 12));
-    request.followRedirects = false;
-    await request.close().timeout(const Duration(seconds: 12));
+    await http.head(Uri.parse(url)).timeout(const Duration(seconds: 12));
   } catch (e) {
     debugPrint('Precalentar red ($url): $e');
-  } finally {
-    client.close(force: true);
   }
 }
 

@@ -9,6 +9,7 @@ String textoBusquedaProducto(Map<String, dynamic> data) {
     data['codigo_barras']?.toString() ?? '',
     data['tallas_disponibles']?.toString() ?? '',
     data['colores']?.toString() ?? '',
+    data['seccion']?.toString() ?? '',
     data['categoria_producto']?.toString() ?? '',
     NegocioIngredienteService.textoIngredientes(data) ?? '',
   ];

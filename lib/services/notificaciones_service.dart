@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -34,7 +35,7 @@ class NotificacionesService {
         settings: const InitializationSettings(android: androidInit, iOS: iosInit),
       );
 
-      if (Platform.isAndroid) {
+      if (!kIsWeb && Platform.isAndroid) {
         final androidPlugin =
             _local.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
         final permiso = androidPlugin?.requestNotificationsPermission();
@@ -71,7 +72,7 @@ class NotificacionesService {
   }
 
   static Future<void> _crearCanalAndroid() async {
-    if (!Platform.isAndroid) return;
+    if (kIsWeb || !Platform.isAndroid) return;
     const channel = AndroidNotificationChannel(
       canalPedidosId,
       'Pedidos',

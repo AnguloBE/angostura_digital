@@ -276,6 +276,10 @@ class _ExplorarTabState extends State<ExplorarTab> {
         }).toList();
         if (productos.isEmpty) return Padding(padding: const EdgeInsets.symmetric(vertical: 10), child: Text('No encontramos este producto.', style: TextStyle(color: Colors.grey.shade600)));
 
+        const tope = 24;
+        final visibles = productos.take(tope).toList();
+        final hayMas = productos.length > visibles.length;
+
         return Center(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -283,9 +287,21 @@ class _ExplorarTabState extends State<ExplorarTab> {
               const spacing = 12.0;
               final itemWidth = anchoTarjetaCuadricula(maxW, spacing: spacing);
 
-              return Wrap(
-                spacing: spacing, runSpacing: spacing,
-                children: productos.map((doc) => SizedBox(width: itemWidth > 0 ? itemWidth : 150, child: _tarjetaProducto(doc))).toList(),
+              return Column(
+                children: [
+                  Wrap(
+                    spacing: spacing, runSpacing: spacing,
+                    children: visibles.map((doc) => SizedBox(width: itemWidth > 0 ? itemWidth : 150, child: _tarjetaProducto(doc))).toList(),
+                  ),
+                  if (hayMas)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Mostrando ${visibles.length} de ${productos.length}. Abre el local para ver el menú completo por secciones.',
+                        style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
+                      ),
+                    ),
+                ],
               );
             },
           ),

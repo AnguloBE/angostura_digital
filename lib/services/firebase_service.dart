@@ -367,7 +367,7 @@ class AuthService {
       case 'invalid-phone-number':
         return 'El número no es válido. Revisa la lada y los 10 dígitos.';
       case 'too-many-requests':
-        return 'Este navegador quedó bloqueado por varios intentos fallidos. Espera un rato y prueba una sola vez.';
+        return 'Firebase pausó los SMS de esta red y de este número por varios intentos fallidos. Espera cerca de una hora y prueba una sola vez. No hay forma de quitar el bloqueo antes.';
       case 'invalid-verification-code':
         return 'Código incorrecto.';
       case 'session-expired':

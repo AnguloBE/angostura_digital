@@ -29,6 +29,8 @@ import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/utils/orden_productos_utils.dart';
 import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
 import 'package:angostura_digital/utils/cuadricula_ancho.dart';
+import 'package:angostura_digital/utils/seccion_producto_utils.dart';
+import 'package:angostura_digital/widgets/filtro_secciones.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/producto_pedido_utils.dart';
 import 'package:angostura_digital/services/negocio_equipo_service.dart';
@@ -59,6 +61,8 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
   late TextEditingController _ubicacionCtrl;
   final TextEditingController _busquedaCatalogoCtrl = TextEditingController();
   String _busquedaCatalogo = '';
+  String _seccionCatalogo = '';
+  int _topeCatalogo = 24;
   GeoPoint? _ubicacionGeo; 
   bool _isLoading = false;
   bool _datosCargados = false; 
@@ -966,7 +970,10 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                       contentPadding:
                           const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                     ),
-                    onChanged: (v) => setState(() => _busquedaCatalogo = v.trim().toLowerCase()),
+                    onChanged: (v) => setState(() {
+                      _busquedaCatalogo = v.trim().toLowerCase();
+                      _topeCatalogo = 24;
+                    }),
                   ),
                   const SizedBox(height: 15),
 
@@ -981,13 +988,19 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                         final itemServ = p['es_servicio'] == true;
                         return esServ ? itemServ : !itemServ;
                       }).toList();
-                      final filtrados = _busquedaCatalogo.isEmpty
-                          ? productos
-                          : productos.where((doc) {
-                              final p = doc.data() as Map<String, dynamic>;
-                              return _coincideBusquedaCatalogo(p, _busquedaCatalogo);
-                            }).toList();
+                      final mapas = productos
+                          .map((doc) => doc.data() as Map<String, dynamic>)
+                          .toList();
+                      final secciones = seccionesOrdenadas(mapas);
+                      final sinSeccion = hayProductosSinSeccion(mapas);
+                      final filtrados = productos.where((doc) {
+                        final p = doc.data() as Map<String, dynamic>;
+                        if (!coincideSeccion(p, _seccionCatalogo)) return false;
+                        if (_busquedaCatalogo.isEmpty) return true;
+                        return _coincideBusquedaCatalogo(p, _busquedaCatalogo);
+                      }).toList();
                       final visibles = ordenarProductosDocumentos(filtrados);
+                      final mostrados = visibles.take(_topeCatalogo).toList();
                       if (productos.isEmpty) {
                         return Padding(
                           padding: const EdgeInsets.all(20.0),
@@ -1020,7 +1033,25 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                         );
                       }
                       
-                      return Center(
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (secciones.isNotEmpty) ...[
+                            FiltroSecciones(
+                              secciones: secciones,
+                              seleccionada: secciones.contains(_seccionCatalogo) ||
+                                      _seccionCatalogo == seccionSinClasificar
+                                  ? _seccionCatalogo
+                                  : '',
+                              incluirSinSeccion: sinSeccion,
+                              onSeleccionada: (s) => setState(() {
+                                _seccionCatalogo = s;
+                                _topeCatalogo = 24;
+                              }),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+                          Center(
                         child: LayoutBuilder(
                           builder: (context, constraints) {
                             double maxW = constraints.maxWidth; if (maxW.isInfinite || maxW <= 0) maxW = MediaQuery.sizeOf(context).width - 32;
@@ -1029,7 +1060,7 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
 
                             return Wrap(
                               spacing: spacing, runSpacing: spacing,
-                              children: visibles.map((doc) {
+                              children: mostrados.map((doc) {
                                 final prod = doc.data() as Map<String, dynamic>;
                                 final puedeEditar = puedeOperar;
                                 List<Widget> extraWidgets = [];
@@ -1093,6 +1124,17 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                                                   ),
                                                 ],
                                               ),
+                                              if (seccionProducto(prod).isNotEmpty) ...[
+                                                const SizedBox(height: 4),
+                                                Text(
+                                                  seccionProducto(prod),
+                                                  style: TextStyle(
+                                                    fontSize: 12,
+                                                    color: Colors.blue.shade700,
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ],
                                               if (!esBodega) ...[
                                                 const SizedBox(height: 6),
                                                 Text('\$${prod['precio']}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 17)),
@@ -1161,6 +1203,19 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                             );
                           },
                         ),
+                          ),
+                          if (visibles.length > mostrados.length)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 12),
+                              child: OutlinedButton.icon(
+                                onPressed: () => setState(() => _topeCatalogo += 24),
+                                icon: const Icon(Icons.expand_more),
+                                label: Text(
+                                  'Ver más (${visibles.length - mostrados.length} restantes)',
+                                ),
+                              ),
+                            ),
+                        ],
                       );
                     },
                   ),

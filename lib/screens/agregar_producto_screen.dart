@@ -12,7 +12,9 @@ import 'package:angostura_digital/screens/ingredientes_negocio_screen.dart';
 import 'package:angostura_digital/screens/ubicaciones_negocio_screen.dart';
 import 'package:angostura_digital/screens/escaner_codigo_screen.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/seccion_producto_utils.dart';
 import 'package:angostura_digital/widgets/agregar_stock_producto_dialog.dart';
+import 'package:angostura_digital/widgets/selector_seccion.dart';
 
 class AgregarProductoScreen extends StatefulWidget {
   final String negocioId;
@@ -60,6 +62,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
   // Si el producto no tiene código de barras (no se pide ni se exige).
   bool _sinCodigo = false;
   bool _destacado = false;
+  String _seccion = '';
 
   bool get _usaIngredientes =>
       NegocioIngredienteService.usaIngredientes(widget.categoriaNegocio);
@@ -87,6 +90,9 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     _gramosCtrl = TextEditingController(text: widget.productoData?['peso_o_contenido'] ?? '');
     _fotoUrlExistente = widget.productoData?['foto_url'];
     _destacado = widget.productoData?['destacado'] == true;
+    _seccion = widget.productoData == null
+        ? ''
+        : seccionProducto(widget.productoData!);
 
     if (widget.productoData != null) {
       _ingredientesSeleccionados.addAll(
@@ -317,6 +323,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
         'descripcion': _descCtrl.text.trim(),
         'foto_url': fotoFinal,
         'destacado': _destacado,
+        'seccion': _seccion.trim(),
         'categoria_negocio': widget.categoriaNegocio,
         ...datosExtras,
       };
@@ -827,6 +834,12 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
                 activeThumbColor: Colors.amber.shade800,
                 secondary: Icon(Icons.star_rounded, color: Colors.amber.shade700),
                 onChanged: (v) => setState(() => _destacado = v),
+              ),
+              const SizedBox(height: 8),
+              SelectorSeccion(
+                negocioId: widget.negocioId,
+                valorInicial: _seccion,
+                onChanged: (v) => _seccion = v,
               ),
               const SizedBox(height: 12),
               

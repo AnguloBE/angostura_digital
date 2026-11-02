@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:http/http.dart' as http;
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:flutter/foundation.dart';
 
@@ -99,11 +99,8 @@ class RedDiagnostico {
     Duration limite = const Duration(seconds: 12),
   }) async {
     final sw = Stopwatch()..start();
-    final client = HttpClient();
     try {
-      final request = await client.headUrl(Uri.parse(url)).timeout(limite);
-      request.followRedirects = false;
-      await request.close().timeout(limite);
+      await http.head(Uri.parse(url)).timeout(limite);
       sw.stop();
       return sw.elapsedMilliseconds;
     } catch (e) {
@@ -114,8 +111,6 @@ class RedDiagnostico {
         debugPrint('RedDiag ping timeout $url: $e');
       }
       return null;
-    } finally {
-      client.close(force: true);
     }
   }
 

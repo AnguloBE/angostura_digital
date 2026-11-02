@@ -16,6 +16,8 @@ import 'package:angostura_digital/widgets/reservar_cita_sheet.dart';
 import 'package:angostura_digital/utils/orden_productos_utils.dart';
 import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
 import 'package:angostura_digital/utils/cuadricula_ancho.dart';
+import 'package:angostura_digital/utils/seccion_producto_utils.dart';
+import 'package:angostura_digital/widgets/filtro_secciones.dart';
 
 class MenuNegocioScreen extends StatefulWidget {
   final String negocioId;
@@ -42,6 +44,7 @@ class MenuNegocioScreen extends StatefulWidget {
 class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
   final TextEditingController _busquedaCtrl = TextEditingController();
   String _busqueda = '';
+  String _seccionMenu = '';
 
   bool get _esBodega => CategoriasNegocio.esBodega(widget.categoriaNegocio);
 
@@ -371,12 +374,17 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                       );
                     }
 
-                    final filtrados = _busqueda.isEmpty
-                        ? productos
-                        : productos.where((doc) {
-                            final d = doc.data() as Map<String, dynamic>;
-                            return _coincideBusqueda(d, _busqueda);
-                          }).toList();
+                    final mapas = productos
+                        .map((doc) => doc.data() as Map<String, dynamic>)
+                        .toList();
+                    final secciones = seccionesOrdenadas(mapas);
+                    final sinSeccion = hayProductosSinSeccion(mapas);
+                    final filtrados = productos.where((doc) {
+                      final d = doc.data() as Map<String, dynamic>;
+                      if (!coincideSeccion(d, _seccionMenu)) return false;
+                      if (_busqueda.isEmpty) return true;
+                      return _coincideBusqueda(d, _busqueda);
+                    }).toList();
                     final visibles = ordenarProductosDocumentos(filtrados);
 
                     if (visibles.isEmpty) {
@@ -412,157 +420,82 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                       );
                     }
 
-                    return SingleChildScrollView(
-                      key: PageStorageKey<String>('menu_scroll_${widget.negocioId}'),
-                      padding: const EdgeInsets.only(left: 16, right: 16, bottom: 80),
-                      child: Center(
-                        child: LayoutBuilder(
-                          builder: (context, constraints) {
-                            double maxW = constraints.maxWidth; if (maxW.isInfinite || maxW <= 0) maxW = MediaQuery.sizeOf(context).width - 32;
-                            const spacing = 12.0;
-                            final itemWidth = anchoTarjetaCuadricula(maxW, spacing: spacing);
-
-                            return Wrap(
-                              spacing: spacing, runSpacing: spacing,
-                              children: visibles.map((doc) {
-                                final data = doc.data() as Map<String, dynamic>;
-                                String? prodFoto = data['foto_url'];
-
-                                List<Widget> extraWidgets = [];
-                                final esServicio = data['es_servicio'] == true;
-                                final tipoServ =
-                                    data['tipo_servicio']?.toString() ?? 'cita';
-
-                                if (esServicio) {
-                                  extraWidgets.add(_infoChip(
-                                    tipoServ == 'cita'
-                                        ? '📅 Con cita (elige hora)'
-                                        : '🏠 Solicitud a domicilio',
-                                  ));
-                                  final dur = (data['duracion_minutos'] as num?)?.toInt();
-                                  if (tipoServ == 'cita' && dur != null && dur > 0) {
-                                    extraWidgets.add(_infoChip('$dur min'));
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (secciones.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: FiltroSecciones(
+                              secciones: secciones,
+                              seleccionada: secciones.contains(_seccionMenu) ||
+                                      _seccionMenu == seccionSinClasificar
+                                  ? _seccionMenu
+                                  : '',
+                              incluirSinSeccion: sinSeccion,
+                              onSeleccionada: (s) => setState(() => _seccionMenu = s),
+                            ),
+                          ),
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final anchoLista = constraints.maxWidth - 32;
+                              final columnas = columnasTarjetaCuadricula(anchoLista);
+                              final bloques = bloquesCatalogo<QueryDocumentSnapshot>(
+                                items: visibles,
+                                seccionDe: (doc) => seccionProducto(
+                                  doc.data() as Map<String, dynamic>,
+                                ),
+                                esDestacado: (doc) => productoEsDestacado(
+                                  doc.data() as Map<String, dynamic>,
+                                ),
+                                columnas: columnas,
+                                agrupar: _seccionMenu.isEmpty,
+                              );
+                              return ListView.builder(
+                                key: PageStorageKey<String>('menu_scroll_${widget.negocioId}'),
+                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+                                itemCount: bloques.length,
+                                itemBuilder: (context, index) {
+                                  final bloque = bloques[index];
+                                  if (bloque.esTitulo) {
+                                    return Padding(
+                                      padding: const EdgeInsets.only(top: 6, bottom: 8),
+                                      child: Text(
+                                        bloque.titulo!,
+                                        style: const TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    );
                                   }
-                                } else {
-                                  final textoIngredientes =
-                                      NegocioIngredienteService.textoIngredientes(data);
-                                  if (textoIngredientes != null) {
-                                    extraWidgets.add(
-                                        _infoChip('Ingredientes: $textoIngredientes'));
-                                  }
-                                  if (data['peso_o_contenido'] != null &&
-                                      data['peso_o_contenido'].toString().isNotEmpty) {
-                                    extraWidgets.add(
-                                        _infoChip('Cont: ${data['peso_o_contenido']}'));
-                                  }
-                                }
-
-                                final controlaInventario =
-                                    !esServicio && data['controla_inventario'] == true;
-                                final stock = NegocioUbicacionService.stockTotal(data);
-                                final agotado = controlaInventario && stock <= 0;
-                                final pocas =
-                                    controlaInventario && stock > 0 && stock <= 5;
-
-                                return SizedBox(
-                                  width: itemWidth > 0 ? itemWidth : 150,
-                                  child: Card(
-                                    elevation: 3, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)), clipBehavior: Clip.antiAlias,
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, 
+                                  return Padding(
+                                    padding: const EdgeInsets.only(bottom: 12),
+                                    child: Row(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
                                       children: [
-                                        SquareImage(
-                                          imageUrl: prodFoto,
-                                          color: !isAbierto ? Colors.black.withOpacity(0.5) : null,
-                                          colorBlendMode: !isAbierto ? BlendMode.saturation : null,
-                                          placeholder: Container(color: Colors.grey.shade200, child: const Icon(Icons.fastfood, color: Colors.grey, size: 50)),
-                                        ),
-                                        Padding(
-                                          padding: const EdgeInsets.all(12.0),
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Row(
-                                                crossAxisAlignment: CrossAxisAlignment.start,
-                                                children: [
-                                                  if (productoEsDestacado(data)) ...[
-                                                    Padding(
-                                                      padding: const EdgeInsets.only(top: 2, right: 4),
-                                                      child: Icon(Icons.star_rounded, size: 18, color: Colors.amber.shade700),
-                                                    ),
-                                                  ],
-                                                  Expanded(
-                                                    child: Text(
-                                                      data['nombre'] ?? '',
-                                                      maxLines: 2,
-                                                      overflow: TextOverflow.ellipsis,
-                                                      style: TextStyle(
-                                                        fontWeight: FontWeight.bold,
-                                                        fontSize: 15,
-                                                        height: 1.15,
-                                                        color: !isAbierto ? Colors.grey : Colors.black87,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                              if (!_ocultarPrecios) ...[
-                                                const SizedBox(height: 6),
-                                                Text('\$${data['precio']}', style: TextStyle(color: !isAbierto ? Colors.grey : Colors.green, fontWeight: FontWeight.bold, fontSize: 17)),
-                                              ],
-                                              if (data['descripcion'] != null && data['descripcion'].toString().isNotEmpty) ...[const SizedBox(height: 6), Text(data['descripcion'], style: TextStyle(fontSize: 13, color: Colors.grey.shade800))],
-                                              if (extraWidgets.isNotEmpty) ...[const SizedBox(height: 8), Column(crossAxisAlignment: CrossAxisAlignment.start, children: extraWidgets)],
-                                              if (agotado) ...[const SizedBox(height: 8), _badgeStock('Agotado', Colors.red)],
-                                              if (pocas) ...[const SizedBox(height: 8), _badgeStock('¡Solo quedan $stock!', Colors.orange.shade800)],
-                                              const SizedBox(height: 12),
-                                              
-                                              if (isAbierto && !agotado)
-                                                Align(
-                                                  alignment: Alignment.bottomRight,
-                                                  child: GestureDetector(
-                                                    onTap: () => _agregarItem(
-                                                      context,
-                                                      negocioId: widget.negocioId,
-                                                      docId: doc.id,
-                                                      data: data,
-                                                      foto: prodFoto,
-                                                      dataNegocio: dataNegocio,
-                                                      controlaInventario: controlaInventario,
-                                                      stock: stock,
-                                                    ),
-                                                    child: Container(
-                                                      padding: const EdgeInsets.all(8),
-                                                      decoration: BoxDecoration(
-                                                        color: esServicio
-                                                            ? Colors.deepPurple
-                                                            : Colors.blueAccent,
-                                                        borderRadius:
-                                                            BorderRadius.circular(10),
-                                                      ),
-                                                      child: Icon(
-                                                        esServicio
-                                                            ? (tipoServ == 'cita'
-                                                                ? Icons.event
-                                                                : Icons.send)
-                                                            : Icons.add,
-                                                        color: Colors.white,
-                                                        size: 20,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                )
-                                            ],
+                                        for (var c = 0; c < columnas; c++) ...[
+                                          if (c > 0) const SizedBox(width: 12),
+                                          Expanded(
+                                            child: c < bloque.fila.length
+                                                ? _tarjetaProducto(
+                                                    doc: bloque.fila[c],
+                                                    isAbierto: isAbierto,
+                                                    dataNegocio: dataNegocio,
+                                                  )
+                                                : const SizedBox.shrink(),
                                           ),
-                                        ),
+                                        ],
                                       ],
                                     ),
-                                  ),
-                                );
-                              }).toList(),
-                            );
-                          },
+                                  );
+                                },
+                              );
+                            },
+                          ),
                         ),
-                      ),
+                      ],
                     );
                   },
                 ),
@@ -570,6 +503,161 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
             ],
           );
         }
+      ),
+    );
+  }
+
+  Widget _tarjetaProducto({
+    required QueryDocumentSnapshot doc,
+    required bool isAbierto,
+    required Map<String, dynamic> dataNegocio,
+  }) {
+    final data = doc.data() as Map<String, dynamic>;
+    final String? prodFoto = data['foto_url'];
+    final extraWidgets = <Widget>[];
+    final esServicio = data['es_servicio'] == true;
+    final tipoServ = data['tipo_servicio']?.toString() ?? 'cita';
+
+    if (esServicio) {
+      extraWidgets.add(_infoChip(
+        tipoServ == 'cita' ? '📅 Con cita (elige hora)' : '🏠 Solicitud a domicilio',
+      ));
+      final dur = (data['duracion_minutos'] as num?)?.toInt();
+      if (tipoServ == 'cita' && dur != null && dur > 0) {
+        extraWidgets.add(_infoChip('$dur min'));
+      }
+    } else {
+      final textoIngredientes = NegocioIngredienteService.textoIngredientes(data);
+      if (textoIngredientes != null) {
+        extraWidgets.add(_infoChip('Ingredientes: $textoIngredientes'));
+      }
+      if (data['peso_o_contenido'] != null &&
+          data['peso_o_contenido'].toString().isNotEmpty) {
+        extraWidgets.add(_infoChip('Cont: ${data['peso_o_contenido']}'));
+      }
+    }
+
+    final controlaInventario = !esServicio && data['controla_inventario'] == true;
+    final stock = NegocioUbicacionService.stockTotal(data);
+    final agotado = controlaInventario && stock <= 0;
+    final pocas = controlaInventario && stock > 0 && stock <= 5;
+
+    return RepaintBoundary(
+      key: ValueKey(doc.id),
+      child: Card(
+        elevation: 3,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SquareImage(
+              imageUrl: prodFoto,
+              color: !isAbierto ? Colors.black.withOpacity(0.5) : null,
+              colorBlendMode: !isAbierto ? BlendMode.saturation : null,
+              placeholder: Container(
+                color: Colors.grey.shade200,
+                child: const Icon(Icons.fastfood, color: Colors.grey, size: 50),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (productoEsDestacado(data)) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2, right: 4),
+                          child: Icon(Icons.star_rounded, size: 18, color: Colors.amber.shade700),
+                        ),
+                      ],
+                      Expanded(
+                        child: Text(
+                          data['nombre'] ?? '',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                            height: 1.15,
+                            color: !isAbierto ? Colors.grey : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (!_ocultarPrecios) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      '\$${data['precio']}',
+                      style: TextStyle(
+                        color: !isAbierto ? Colors.grey : Colors.green,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 17,
+                      ),
+                    ),
+                  ],
+                  if (data['descripcion'] != null && data['descripcion'].toString().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      data['descripcion'],
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
+                    ),
+                  ],
+                  if (extraWidgets.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Column(crossAxisAlignment: CrossAxisAlignment.start, children: extraWidgets),
+                  ],
+                  if (agotado) ...[
+                    const SizedBox(height: 8),
+                    _badgeStock('Agotado', Colors.red),
+                  ],
+                  if (pocas) ...[
+                    const SizedBox(height: 8),
+                    _badgeStock('¡Solo quedan $stock!', Colors.orange.shade800),
+                  ],
+                  const SizedBox(height: 12),
+                  if (isAbierto && !agotado)
+                    Align(
+                      alignment: Alignment.bottomRight,
+                      child: GestureDetector(
+                        onTap: () => _agregarItem(
+                          context,
+                          negocioId: widget.negocioId,
+                          docId: doc.id,
+                          data: data,
+                          foto: prodFoto,
+                          dataNegocio: dataNegocio,
+                          controlaInventario: controlaInventario,
+                          stock: stock,
+                        ),
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: esServicio ? Colors.deepPurple : Colors.blueAccent,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Icon(
+                            esServicio
+                                ? (tipoServ == 'cita' ? Icons.event : Icons.send)
+                                : Icons.add,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -66,26 +66,31 @@ class SquareImage extends StatelessWidget {
     }
 
     final url = imageUrl!;
-    final memCacheWidth = size != null
-        ? (size! * MediaQuery.devicePixelRatioOf(context)).round()
-        : null;
 
     if (useCachedNetwork) {
-      return CachedNetworkImage(
-        imageUrl: url,
-        fit: BoxFit.cover,
-        width: double.infinity,
-        height: double.infinity,
-        memCacheWidth: memCacheWidth,
-        color: color,
-        colorBlendMode: colorBlendMode,
-        placeholder: (_, __) => Container(
-          color: Colors.grey.shade200,
-          child: const Center(
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-        errorWidget: (_, __, ___) => _buildPlaceholder(),
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final dpr = MediaQuery.devicePixelRatioOf(context);
+          final logical = size ??
+              (constraints.maxWidth.isFinite && constraints.maxWidth > 0
+                  ? constraints.maxWidth
+                  : 240);
+          final memCacheWidth = (logical * dpr).round().clamp(64, 960);
+          return CachedNetworkImage(
+            imageUrl: url,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            memCacheWidth: memCacheWidth,
+            memCacheHeight: memCacheWidth,
+            filterQuality: FilterQuality.low,
+            fadeInDuration: const Duration(milliseconds: 120),
+            color: color,
+            colorBlendMode: colorBlendMode,
+            placeholder: (context, url) => Container(color: Colors.grey.shade200),
+            errorWidget: (context, url, error) => _buildPlaceholder(),
+          );
+        },
       );
     }
 

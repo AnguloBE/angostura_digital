@@ -1,12 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import 'package:angostura_digital/firebase_options.dart';
 import 'package:angostura_digital/utils/app_check_config.dart';
@@ -102,7 +102,7 @@ class FirestoreGrpcService {
           detalle: 'leyó caché local (gRPC no conectó al servidor)',
         );
       }
-      if (ms < 80) {
+      if (!kIsWeb && ms < 80) {
         registrarEstadoGrpc(
           operativo: false,
           motivo: 'respuesta ${ms}ms',
@@ -175,7 +175,7 @@ class FirestoreGrpcService {
           detalle: 'leyó caché local (gRPC no conectó al servidor)',
         );
       }
-      if (ms < 80) {
+      if (!kIsWeb && ms < 80) {
         registrarEstadoGrpc(
           operativo: false,
           motivo: 'respuesta ${ms}ms',
@@ -367,21 +367,16 @@ class FirestoreGrpcService {
     final url =
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/$rutaDoc?key=$apiKey';
 
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 3);
-    try {
-      final request = await client.getUrl(Uri.parse(url));
-      request.headers.set('Authorization', 'Bearer $idToken');
-      final appCheckToken = tokens.appCheckToken;
-      if (appCheckToken != null && appCheckToken.isNotEmpty) {
-        request.headers.set('X-Firebase-AppCheck', appCheckToken);
-      }
-      final response = await request.close();
-      final body = await response.transform(utf8.decoder).join();
-      return (statusCode: response.statusCode, body: body);
-    } finally {
-      client.close(force: true);
-    }
+    final response = await http
+        .get(
+          Uri.parse(url),
+          headers: _cabecerasRest(
+            idToken: idToken,
+            appCheckToken: tokens.appCheckToken,
+          ),
+        )
+        .timeout(const Duration(seconds: 3));
+    return (statusCode: response.statusCode, body: response.body);
   }
 
   static Future<void> _patchDocumentoRest(
@@ -432,28 +427,21 @@ class FirestoreGrpcService {
     final url =
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/$collection?documentId=$docId&key=$apiKey';
 
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 5);
-    try {
-      final request = await client.postUrl(Uri.parse(url));
-      request.headers.set('Authorization', 'Bearer $idToken');
-      final appCheckToken = tokens.appCheckToken;
-      if (appCheckToken != null && appCheckToken.isNotEmpty) {
-        request.headers.set('X-Firebase-AppCheck', appCheckToken);
-      }
-      request.headers.contentType =
-          ContentType('application', 'json', charset: 'utf-8');
-      request.write(body);
+    final response = await http
+        .post(
+          Uri.parse(url),
+          headers: _cabecerasRest(
+            idToken: idToken,
+            appCheckToken: tokens.appCheckToken,
+            json: true,
+          ),
+          body: body,
+        )
+        .timeout(const Duration(seconds: 5));
 
-      final response = await request.close();
-      final responseBody = await response.transform(utf8.decoder).join();
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('🔌 REST POST doc error ${response.statusCode}: $responseBody');
-        throw Exception('Firestore REST ${response.statusCode}');
-      }
-    } finally {
-      client.close(force: true);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      debugPrint('🔌 REST POST doc error ${response.statusCode}: ${response.body}');
+      throw Exception('Firestore REST ${response.statusCode}');
     }
   }
 
@@ -479,28 +467,21 @@ class FirestoreGrpcService {
     final url =
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/$rutaDoc?$maskParams&key=$apiKey';
 
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 5);
-    try {
-      final request = await client.patchUrl(Uri.parse(url));
-      request.headers.set('Authorization', 'Bearer $idToken');
-      final appCheckToken = tokens.appCheckToken;
-      if (appCheckToken != null && appCheckToken.isNotEmpty) {
-        request.headers.set('X-Firebase-AppCheck', appCheckToken);
-      }
-      request.headers.contentType =
-          ContentType('application', 'json', charset: 'utf-8');
-      request.write(body);
+    final response = await http
+        .patch(
+          Uri.parse(url),
+          headers: _cabecerasRest(
+            idToken: idToken,
+            appCheckToken: tokens.appCheckToken,
+            json: true,
+          ),
+          body: body,
+        )
+        .timeout(const Duration(seconds: 5));
 
-      final response = await request.close();
-      final responseBody = await response.transform(utf8.decoder).join();
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('🔌 REST PATCH error ${response.statusCode}: $responseBody');
-        throw Exception('Firestore REST ${response.statusCode}');
-      }
-    } finally {
-      client.close(force: true);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      debugPrint('🔌 REST PATCH error ${response.statusCode}: ${response.body}');
+      throw Exception('Firestore REST ${response.statusCode}');
     }
   }
 
@@ -527,38 +508,44 @@ class FirestoreGrpcService {
     final url =
         'https://firestore.googleapis.com/v1/projects/$_projectId/databases/(default)/documents/pedidos?key=$apiKey';
 
-    final client = HttpClient();
-    client.connectionTimeout = const Duration(seconds: 5);
-    try {
-      final request = await client.postUrl(Uri.parse(url));
-      request.headers.set('Authorization', 'Bearer $idToken');
-      final appCheckToken = tokens.appCheckToken;
-      if (appCheckToken != null && appCheckToken.isNotEmpty) {
-        request.headers.set('X-Firebase-AppCheck', appCheckToken);
-      }
-      request.headers.contentType =
-          ContentType('application', 'json', charset: 'utf-8');
-      request.write(body);
+    final response = await http
+        .post(
+          Uri.parse(url),
+          headers: _cabecerasRest(
+            idToken: idToken,
+            appCheckToken: tokens.appCheckToken,
+            json: true,
+          ),
+          body: body,
+        )
+        .timeout(const Duration(seconds: 5));
 
-      final response = await request.close();
-      final responseBody = await response.transform(utf8.decoder).join();
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        debugPrint('🔌 REST pedido error ${response.statusCode}: $responseBody');
-        throw Exception(
-          'Firestore REST ${response.statusCode}: no se pudo guardar el pedido.',
-        );
-      }
-
-      final json = jsonDecode(responseBody) as Map<String, dynamic>;
-      final name = json['name']?.toString() ?? '';
-      final id = name.split('/').last;
-      if (id.isEmpty) {
-        throw Exception('Firestore REST no devolvió ID de pedido.');
-      }
-      return id;
-    } finally {
-      client.close(force: true);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      debugPrint('🔌 REST pedido error ${response.statusCode}: ${response.body}');
+      throw Exception(
+        'Firestore REST ${response.statusCode}: no se pudo guardar el pedido.',
+      );
     }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    final name = json['name']?.toString() ?? '';
+    final id = name.split('/').last;
+    if (id.isEmpty) {
+      throw Exception('Firestore REST no devolvió ID de pedido.');
+    }
+    return id;
+  }
+
+  static Map<String, String> _cabecerasRest({
+    required String idToken,
+    String? appCheckToken,
+    bool json = false,
+  }) {
+    return {
+      'Authorization': 'Bearer $idToken',
+      if (json) 'Content-Type': 'application/json; charset=utf-8',
+      if (appCheckToken != null && appCheckToken.isNotEmpty)
+        'X-Firebase-AppCheck': appCheckToken,
+    };
   }
 }
