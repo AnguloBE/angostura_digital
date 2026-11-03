@@ -2,7 +2,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/utils/mobile_image_utils.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
@@ -250,24 +249,16 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     }
   }
 
-  Future<void> _seleccionarYRecortarImagen(ImageSource source) async {
-    final bytes = await MobileImageUtils.pickCropAndReadBytes(
+  Future<void> _mostrarOpcionesImagen() async {
+    final bytes = await MobileImageUtils.elegirYRecortar(
       context: context,
-      source: source,
       cropTitle: 'Recortar producto',
     );
-    if (bytes == null) return;
+    if (bytes == null || !mounted) return;
     setState(() {
       _imagenBytes = bytes;
       _fotoUrlExistente = null;
     });
-  }
-
-  void _mostrarOpcionesImagen() {
-    MobileImageUtils.showImageSourcePicker(
-      context,
-      onSelected: _seleccionarYRecortarImagen,
-    );
   }
 
   Future<void> _guardarProducto() async {
@@ -808,14 +799,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
                 child: SquarePhotoPicker(
                   imageBytes: _imagenBytes,
                   imageUrl: _fotoUrlExistente,
-                  emptyChild: const Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.add_a_photo, size: 50, color: Colors.grey),
-                      SizedBox(height: 10),
-                      Text('Tocar para agregar foto', style: TextStyle(color: Colors.grey)),
-                    ],
-                  ),
+                  emptyChild: const FotoVacia(),
                 ),
               ),
               const SizedBox(height: 20),

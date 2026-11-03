@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/utils/mobile_image_utils.dart';
@@ -130,16 +129,17 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
   }
 
   // --- 1. FUNCIÓN PARA CAMBIAR EL LOGO ---
-  Future<void> _subirLogoDesdeFuente(ImageSource source) async {
-    try {
-      final bytes = await MobileImageUtils.pickCropAndReadBytes(
-        context: context,
-        source: source,
-        cropTitle: 'Recortar logo',
-        imageQuality: 80,
-      );
-      if (bytes == null) return;
+  Future<void> _cambiarImagen() async {
+    final bytes = await MobileImageUtils.elegirYRecortar(
+      context: context,
+      cropTitle: 'Recortar logo',
+      galleryLabel: 'Elegir logo de la galería',
+      cameraLabel: 'Tomar foto del logo',
+      imageQuality: 80,
+    );
+    if (bytes == null || !mounted) return;
 
+    try {
       setState(() => _isLoading = true);
       final nombreArchivo =
           '${widget.negocioId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
@@ -172,15 +172,6 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
-  }
-
-  void _cambiarImagen() {
-    MobileImageUtils.showImageSourcePicker(
-      context,
-      galleryLabel: 'Elegir logo de la galería',
-      cameraLabel: 'Tomar foto del logo',
-      onSelected: _subirLogoDesdeFuente,
-    );
   }
 
   // --- 2. FUNCIÓN PARA GUARDAR DATOS PRINCIPALES ---

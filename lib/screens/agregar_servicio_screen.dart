@@ -2,7 +2,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/utils/mobile_image_utils.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
@@ -68,13 +67,12 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
     super.dispose();
   }
 
-  Future<void> _elegirFoto(ImageSource source) async {
-    final bytes = await MobileImageUtils.pickCropAndReadBytes(
+  Future<void> _elegirFoto() async {
+    final bytes = await MobileImageUtils.elegirYRecortar(
       context: context,
-      source: source,
       cropTitle: 'Foto del servicio',
     );
-    if (bytes != null) setState(() => _imagenBytes = bytes);
+    if (bytes != null && mounted) setState(() => _imagenBytes = bytes);
   }
 
   Future<String?> _subirFoto() async {
@@ -148,21 +146,11 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
           padding: const EdgeInsets.all(16),
           children: [
             GestureDetector(
-              onTap: () => MobileImageUtils.showImageSourcePicker(
-                context,
-                onSelected: _elegirFoto,
-              ),
+              onTap: _elegirFoto,
               child: SquarePhotoPicker(
                 imageUrl: _fotoUrlExistente,
                 imageBytes: _imagenBytes,
-                emptyChild: const Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.add_a_photo, size: 50, color: Colors.grey),
-                    SizedBox(height: 8),
-                    Text('Tocar para foto', style: TextStyle(color: Colors.grey)),
-                  ],
-                ),
+                emptyChild: const FotoVacia(),
               ),
             ),
             const SizedBox(height: 20),

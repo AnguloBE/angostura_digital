@@ -20,6 +20,7 @@ import 'package:angostura_digital/utils/auth_red_precalentar.dart';
 import 'package:angostura_digital/utils/red_diagnostico.dart';
 import 'package:angostura_digital/services/firestore_grpc_service.dart';
 import 'package:angostura_digital/screens/menu_negocio_screen.dart';
+import 'package:angostura_digital/navigation/app_navigator.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -685,20 +686,12 @@ class _CarritoScreenState extends State<CarritoScreen> {
         );
       }
 
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _esBodegaSalida
-                ? 'Salida registrada en bodega.'
-                : (_esMostrador
-                    ? 'Pedido registrado en el local.'
-                    : '¡Pedido enviado!'),
-          ),
-          backgroundColor: Colors.green,
-        ),
-      );
+      // El pedido ya quedó guardado. Vaciar aunque esta pantalla se haya
+      // cerrado (atrás, o la sesión se reconstruyó al verificar el teléfono).
       cart.limpiarCarrito();
+      _avisarPedidoEnviado();
+
+      if (!mounted) return;
       if (_esMostrador) {
         Navigator.of(context).pop();
         if (mounted) Navigator.of(context).pop();
@@ -734,6 +727,20 @@ class _CarritoScreenState extends State<CarritoScreen> {
         });
       }
     }
+  }
+
+  void _avisarPedidoEnviado() {
+    final mensaje = _esBodegaSalida
+        ? 'Salida registrada en bodega.'
+        : (_esMostrador ? 'Pedido registrado en el local.' : '¡Pedido enviado!');
+    final ctx = mounted ? context : appNavigatorKey.currentContext;
+    if (ctx == null) return;
+    ScaffoldMessenger.maybeOf(ctx)?.showSnackBar(
+      SnackBar(
+        content: Text(mensaje),
+        backgroundColor: Colors.green,
+      ),
+    );
   }
 
   bool _tieneUbicacionConfirmada() =>
@@ -1077,16 +1084,22 @@ class _CarritoScreenState extends State<CarritoScreen> {
     );
   }
 
-  void _sincronizarComision(CartProvider cart) {
+  void _programarSyncComision(CartProvider cart) {
+    if (cart.items.isEmpty) return;
     if (_ultimoSubtotalComision == cart.subtotal) return;
-    _ultimoSubtotalComision = cart.subtotal;
-    _aplicarComisionAlCarrito(cart);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final actual = cart.subtotal;
+      if (_ultimoSubtotalComision == actual) return;
+      _ultimoSubtotalComision = actual;
+      _aplicarComisionAlCarrito(cart);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final cart = context.watch<CartProvider>();
-    _sincronizarComision(cart);
+    _programarSyncComision(cart);
     final bool botonActivo = _puedePedir(cart);
     final bool esServicios = cart.esCarritoServicios;
     final bool necesitaUbicacion = cart.tieneServicioSolicitud;
@@ -1104,7 +1117,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
                 _domicilioDisponible &&
                 !_ubicacionListaConfirmada));
 
-    return Stack(
+    return PopScope(
+      canPop: !_enviandoPedido,
+      child: Stack(
       children: [
         Scaffold(
       appBar: AppBar(
@@ -1316,7 +1331,18 @@ class _CarritoScreenState extends State<CarritoScreen> {
                             const Divider(height: 24),
                             _encabezadoProductos(cart),
                             ...cart.items.values.map((item) {
+                            final subtitulo = ProductoPedidoUtils.subtituloLinea({
+                              'detalles': item.ingredientesBase.isNotEmpty
+                                  ? (Map<String, String>.from(item.detalles)
+                                    ..remove('ingredientes'))
+                                  : item.detalles,
+                              'es_promocion': item.esPromocion,
+                            });
+                            final cajaIngredientes = _seccionIngredientesItem(cart, item);
                             return Card(
+                              key: ValueKey(
+                                '${item.lineaId}|${item.cantidad}|${item.ingredientesQuitados.join('|')}|${item.extras.map((e) => e.nombre).join('|')}',
+                              ),
                               margin: const EdgeInsets.only(bottom: 10),
                               child: Padding(
                                 padding: const EdgeInsets.all(10),
@@ -1345,16 +1371,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                               fontSize: 16,
                                             ),
                                           ),
-                                          if (ProductoPedidoUtils.subtituloLinea({
-                                                'detalles': item.detalles,
-                                                'es_promocion': item.esPromocion,
-                                              }) !=
-                                              null)
+                                          if (subtitulo != null)
                                             Text(
-                                              ProductoPedidoUtils.subtituloLinea({
-                                                'detalles': item.detalles,
-                                                'es_promocion': item.esPromocion,
-                                              })!,
+                                              subtitulo,
                                               style: TextStyle(
                                                 fontSize: 13,
                                                 color: Colors.blueGrey.shade700,
@@ -1404,9 +1423,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                               ),
                                             ),
                                           ],
-                                          if (_seccionIngredientesItem(cart, item) != null) ...[
+                                          if (cajaIngredientes != null) ...[
                                             const SizedBox(height: 6),
-                                            _seccionIngredientesItem(cart, item)!,
+                                            cajaIngredientes,
                                           ],
                                           if (_puedePersonalizar(item)) ...[
                                             const SizedBox(height: 6),
@@ -1516,6 +1535,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
         ),
         if (_enviandoPedido) _overlayEnvioPedido(),
       ],
+    ),
     );
   }
 
@@ -1605,6 +1625,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
     final puedeEditar = _puedePersonalizar(item);
 
     final contenido = Container(
+      key: ValueKey(
+        'ings-${item.lineaId}-${item.ingredientesQuitados.join('|')}-${item.extras.map((e) => '${e.nombre}:${e.precio}').join('|')}',
+      ),
       width: double.infinity,
       margin: const EdgeInsets.only(top: 2),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -2042,9 +2065,6 @@ class _CarritoScreenState extends State<CarritoScreen> {
   }
 
   Future<void> _abrirPersonalizacion(CartProvider cart, CartItem item) async {
-    final quitados = {...item.ingredientesQuitados};
-    final extras = <String, double>{for (final e in item.extras) e.nombre: e.precio};
-
     final opcionesExtra = <String, double>{
       for (final ing in _catalogoIngredientes) ing.nombre: ing.precioExtra,
     };
@@ -2059,160 +2079,21 @@ class _CarritoScreenState extends State<CarritoScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setSheet) {
-            final extraTotal = extras.values.fold(0.0, (s, p) => s + p);
-            return Container(
-              height: MediaQuery.of(ctx).size.height * 0.82,
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Personalizar: ${item.nombre}',
-                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () => Navigator.pop(ctx),
-                      ),
-                    ],
-                  ),
-                  const Divider(),
-                  Expanded(
-                    child: ListView(
-                      children: [
-                        if (item.ingredientesBase.isNotEmpty) ...[
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 8),
-                            child: Text(
-                              'Incluye (desmarca lo que NO quieres)',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
-                            ),
-                          ),
-                          ...item.ingredientesBase.map((ing) {
-                            final incluido = !quitados.contains(ing);
-                            return CheckboxListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              activeColor: Colors.green,
-                              controlAffinity: ListTileControlAffinity.leading,
-                              value: incluido,
-                              title: Text(
-                                ing,
-                                style: TextStyle(
-                                  decoration: incluido ? null : TextDecoration.lineThrough,
-                                  color: incluido ? Colors.black87 : Colors.grey,
-                                ),
-                              ),
-                              onChanged: (val) {
-                                setSheet(() {
-                                  if (val == false) {
-                                    quitados.add(ing);
-                                  } else {
-                                    quitados.remove(ing);
-                                  }
-                                });
-                              },
-                            );
-                          }),
-                          const Divider(height: 24),
-                        ],
-                        if (opcionesExtra.isNotEmpty) ...[
-                          const Padding(
-                            padding: EdgeInsets.symmetric(vertical: 8),
-                            child: Text(
-                              'Agregar extras',
-                              style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
-                            ),
-                          ),
-                          ...opcionesExtra.entries.map((op) {
-                            final agregado = extras.containsKey(op.key);
-                            return CheckboxListTile(
-                              dense: true,
-                              contentPadding: EdgeInsets.zero,
-                              activeColor: Colors.green,
-                              controlAffinity: ListTileControlAffinity.leading,
-                              value: agregado,
-                              title: Text(op.key),
-                              secondary: Text(
-                                op.value > 0 ? '+\$${op.value.toStringAsFixed(2)}' : 'Gratis',
-                                style: TextStyle(
-                                  color: op.value > 0 ? Colors.green.shade700 : Colors.grey,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              onChanged: (val) {
-                                setSheet(() {
-                                  if (val == true) {
-                                    extras[op.key] = op.value;
-                                  } else {
-                                    extras.remove(op.key);
-                                  }
-                                });
-                              },
-                            );
-                          }),
-                        ],
-                        if (item.ingredientesBase.isEmpty && opcionesExtra.isEmpty)
-                          const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Text(
-                              'Este producto no tiene ingredientes configurados para personalizar.',
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  if (extraTotal > 0)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Text(
-                        'Extras: +\$${extraTotal.toStringAsFixed(2)} por unidad',
-                        style: TextStyle(
-                          color: Colors.green.shade800,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blueAccent,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                      onPressed: () {
-                        cart.personalizarItem(
-                          item.lineaId,
-                          quitados: quitados.toList(),
-                          extras: extras.entries
-                              .map((e) => ExtraIngrediente(nombre: e.key, precio: e.value))
-                              .toList(),
-                        );
-                        Navigator.pop(ctx);
-                      },
-                      child: const Text(
-                        'Guardar cambios',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
+      builder: (ctx) => _HojaPersonalizar(
+        key: ValueKey('personalizar-${item.lineaId}'),
+        cart: cart,
+        lineaId: item.lineaId,
+        nombre: item.nombre,
+        ingredientesBase: List<String>.from(item.ingredientesBase),
+        quitadosIniciales: List<String>.from(item.ingredientesQuitados),
+        extrasIniciales: [
+          for (final e in item.extras)
+            ExtraIngrediente(nombre: e.nombre, precio: e.precio),
+        ],
+        opcionesExtra: opcionesExtra,
+      ),
     );
+    if (mounted) setState(() {});
   }
 
   Widget _botonCantidad(IconData icono, VoidCallback accion) => SizedBox(
@@ -2255,6 +2136,240 @@ class _CarritoScreenState extends State<CarritoScreen> {
 }
 
 /// Evita que el mapa parpadee o se reinicie al hacer scroll en el carrito.
+class _HojaPersonalizar extends StatefulWidget {
+  final CartProvider cart;
+  final String lineaId;
+  final String nombre;
+  final List<String> ingredientesBase;
+  final List<String> quitadosIniciales;
+  final List<ExtraIngrediente> extrasIniciales;
+  final Map<String, double> opcionesExtra;
+
+  const _HojaPersonalizar({
+    super.key,
+    required this.cart,
+    required this.lineaId,
+    required this.nombre,
+    required this.ingredientesBase,
+    required this.quitadosIniciales,
+    required this.extrasIniciales,
+    required this.opcionesExtra,
+  });
+
+  @override
+  State<_HojaPersonalizar> createState() => _HojaPersonalizarState();
+}
+
+class _HojaPersonalizarState extends State<_HojaPersonalizar> {
+  late final Set<String> _quitados;
+  late final Map<String, double> _extras;
+
+  @override
+  void initState() {
+    super.initState();
+    _quitados = {...widget.quitadosIniciales};
+    _extras = {for (final e in widget.extrasIniciales) e.nombre: e.precio};
+  }
+
+  List<String> get _quitadosVisibles {
+    final vistos = <String>{};
+    final lista = <String>[];
+    for (final ing in widget.ingredientesBase) {
+      if (_quitados.contains(ing) && vistos.add(ing)) lista.add(ing);
+    }
+    for (final ing in _quitados) {
+      if (vistos.add(ing)) lista.add(ing);
+    }
+    return lista;
+  }
+
+  void _aplicar() {
+    widget.cart.personalizarItem(
+      widget.lineaId,
+      quitados: _quitados.toList(),
+      extras: _extras.entries
+          .map((e) => ExtraIngrediente(nombre: e.key, precio: e.value))
+          .toList(),
+    );
+  }
+
+  void _toggleQuitado(String ing, bool incluir) {
+    if (incluir) {
+      _quitados.remove(ing);
+    } else {
+      _quitados.add(ing);
+    }
+    _aplicar();
+    setState(() {});
+  }
+
+  void _toggleExtra(String nombre, double precio, bool agregar) {
+    if (agregar) {
+      _extras[nombre] = precio;
+    } else {
+      _extras.remove(nombre);
+    }
+    _aplicar();
+    setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final quitados = _quitadosVisibles;
+    final extraTotal = _extras.values.fold(0.0, (s, p) => s + p);
+    final base = widget.ingredientesBase;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.82,
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Personalizar: ${widget.nombre}',
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ],
+          ),
+          Container(
+            key: ValueKey('sin-${quitados.join('|')}'),
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: quitados.isEmpty ? Colors.green.shade50 : Colors.red.shade50,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: quitados.isEmpty ? Colors.green.shade200 : Colors.red.shade200,
+              ),
+            ),
+            child: Text(
+              quitados.isEmpty
+                  ? 'Lleva todos los ingredientes'
+                  : 'Sin: ${quitados.join(', ')}',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: quitados.isEmpty ? Colors.green.shade800 : Colors.redAccent,
+              ),
+            ),
+          ),
+          const Divider(),
+          Expanded(
+            child: ListView(
+              children: [
+                if (base.isNotEmpty) ...[
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      'Incluye (desmarca lo que NO quieres)',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+                    ),
+                  ),
+                  ...List.generate(base.length, (index) {
+                    final ing = base[index];
+                    final incluido = !_quitados.contains(ing);
+                    return CheckboxListTile(
+                      key: ValueKey('base-$index-$ing-$incluido'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      activeColor: Colors.green,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      value: incluido,
+                      title: Text(
+                        ing,
+                        style: TextStyle(
+                          decoration: incluido ? null : TextDecoration.lineThrough,
+                          color: incluido ? Colors.black87 : Colors.grey,
+                        ),
+                      ),
+                      onChanged: (val) => _toggleQuitado(ing, val != false),
+                    );
+                  }),
+                  const Divider(height: 24),
+                ],
+                if (widget.opcionesExtra.isNotEmpty) ...[
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 8),
+                    child: Text(
+                      'Agregar extras',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
+                    ),
+                  ),
+                  ...widget.opcionesExtra.entries.map((op) {
+                    final agregado = _extras.containsKey(op.key);
+                    return CheckboxListTile(
+                      key: ValueKey('extra-${op.key}-$agregado'),
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      activeColor: Colors.green,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      value: agregado,
+                      title: Text(op.key),
+                      secondary: Text(
+                        op.value > 0 ? '+\$${op.value.toStringAsFixed(2)}' : 'Gratis',
+                        style: TextStyle(
+                          color: op.value > 0 ? Colors.green.shade700 : Colors.grey,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      onChanged: (val) => _toggleExtra(op.key, op.value, val == true),
+                    );
+                  }),
+                ],
+                if (base.isEmpty && widget.opcionesExtra.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.all(16),
+                    child: Text(
+                      'Este producto no tiene ingredientes configurados para personalizar.',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (extraTotal > 0)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Extras: +\$${extraTotal.toStringAsFixed(2)} por unidad',
+                style: TextStyle(
+                  color: Colors.green.shade800,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () {
+                _aplicar();
+                Navigator.pop(context);
+              },
+              child: const Text(
+                'Listo',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MetodoChip extends StatelessWidget {
   final String titulo;
   final IconData icono;

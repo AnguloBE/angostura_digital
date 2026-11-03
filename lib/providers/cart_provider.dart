@@ -131,6 +131,7 @@ class CartProvider with ChangeNotifier {
   }
 
   void establecerComisionApp(double monto, String pagadaPor) {
+    if (_comisionApp == monto && _comisionPagadaPor == pagadaPor) return;
     _comisionApp = monto;
     _comisionPagadaPor = pagadaPor;
     notifyListeners();
@@ -248,8 +249,8 @@ class CartProvider with ChangeNotifier {
   }) {
     final item = _items[lineaId];
     if (item == null) return;
-    item.ingredientesQuitados = quitados;
-    item.extras = extras;
+    item.ingredientesQuitados = List<String>.from(quitados);
+    item.extras = List<ExtraIngrediente>.from(extras);
     notifyListeners();
   }
 
@@ -263,7 +264,7 @@ class CartProvider with ChangeNotifier {
 
     base.cantidad -= cantidad;
     final nuevoId = _generarLineaId(base.id);
-    _items[nuevoId] = CartItem(
+    final nuevo = CartItem(
       lineaId: nuevoId,
       id: base.id,
       nombre: base.nombre,
@@ -271,11 +272,20 @@ class CartProvider with ChangeNotifier {
       fotoUrl: base.fotoUrl,
       detalles: base.detalles,
       esPromocion: base.esPromocion,
-      ingredientesBase: base.ingredientesBase,
-      ingredientesQuitados: [...base.ingredientesQuitados],
-      extras: [...base.extras],
+      ingredientesBase: List<String>.from(base.ingredientesBase),
+      ingredientesQuitados: List<String>.from(base.ingredientesQuitados),
+      extras: List<ExtraIngrediente>.from(base.extras),
+      stockDisponible: base.stockDisponible,
       cantidad: cantidad,
     );
+    final ordenados = <String, CartItem>{};
+    for (final entry in _items.entries) {
+      ordenados[entry.key] = entry.value;
+      if (entry.key == lineaId) ordenados[nuevoId] = nuevo;
+    }
+    _items
+      ..clear()
+      ..addAll(ordenados);
     notifyListeners();
     return nuevoId;
   }
