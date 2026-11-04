@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:angostura_digital/providers/cart_provider.dart';
 import 'package:angostura_digital/screens/carrito_screen.dart';
 
@@ -41,7 +43,7 @@ class _MainNavigationState extends State<MainNavigation> {
       body: _pantallas[_currentIndex],
       
       // EL CARRITO FLOTANTE
-      floatingActionButton: cart.items.isNotEmpty
+      floatingActionButton: cart.tieneCompraPersonal
           ? FloatingActionButton.extended(
               backgroundColor: Colors.green,
               foregroundColor: Colors.white,
@@ -54,19 +56,46 @@ class _MainNavigationState extends State<MainNavigation> {
           : null,
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
 
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: (index) {
-          setState(() {
-            _currentIndex = index;
-          });
+      bottomNavigationBar: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: FirebaseAuth.instance.currentUser == null
+            ? null
+            : FirebaseFirestore.instance
+                .collection('pedidos')
+                .where('cliente_id', isEqualTo: FirebaseAuth.instance.currentUser!.uid)
+                .limit(40)
+                .snapshots(),
+        builder: (context, snap) {
+          final activos = snap.data?.docs.where((d) {
+                final estado = (d.data()['estado'] ?? '').toString();
+                return estado != 'Entregado' && estado != 'Cancelado' && estado != 'Confirmada';
+              }).length ??
+              0;
+          return NavigationBar(
+            selectedIndex: _currentIndex,
+            onDestinationSelected: (index) {
+              setState(() {
+                _currentIndex = index;
+              });
+            },
+            destinations: [
+              const NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Inicio'),
+              const NavigationDestination(icon: Icon(Icons.search_outlined), selectedIcon: Icon(Icons.search), label: 'Explorar'),
+              NavigationDestination(
+                icon: Badge(
+                  isLabelVisible: activos > 0,
+                  label: Text(activos > 99 ? '99+' : '$activos'),
+                  child: const Icon(Icons.receipt_long_outlined),
+                ),
+                selectedIcon: Badge(
+                  isLabelVisible: activos > 0,
+                  label: Text(activos > 99 ? '99+' : '$activos'),
+                  child: const Icon(Icons.receipt_long),
+                ),
+                label: 'Pedidos',
+              ),
+            ],
+          );
         },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Inicio'),
-          NavigationDestination(icon: Icon(Icons.search_outlined), selectedIcon: Icon(Icons.search), label: 'Explorar'),
-          NavigationDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: 'Pedidos'),
-          //NavigationDestination(icon: Icon(Icons.person_outline), selectedIcon: Icon(Icons.person), label: 'Perfil'),
-        ],
       ),
     );
   }

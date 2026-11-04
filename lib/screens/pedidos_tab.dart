@@ -5,6 +5,7 @@ import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/widgets/pedido_producto_linea.dart';
 import 'package:angostura_digital/utils/tiempo_estimado_utils.dart';
 import 'package:angostura_digital/utils/pedido_servicios_utils.dart';
+import 'package:angostura_digital/utils/encargo_utils.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:angostura_digital/widgets/editar_telefono_dialog.dart';
 
@@ -168,7 +169,12 @@ class PedidosTab extends StatelessWidget {
                                 )
                               ],
                             ),
-                            
+
+                            if (EncargoUtils.banner(data) != null) ...[
+                              const SizedBox(height: 12),
+                              EncargoUtils.banner(data)!,
+                            ],
+
                             if (!esServicios &&
                                 tiempoEstimado.isNotEmpty &&
                                 debeMostrarTiempoEnPedido(estadoActual)) ...[

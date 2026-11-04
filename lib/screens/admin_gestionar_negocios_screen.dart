@@ -6,6 +6,7 @@ import 'package:angostura_digital/services/negocio_comision_service.dart';
 import 'package:angostura_digital/screens/equipo_negocio_screen.dart';
 import 'package:angostura_digital/screens/gestionar_negocio_screen.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
 
 class AdminGestionarNegociosScreen extends StatefulWidget {
   const AdminGestionarNegociosScreen({super.key});
@@ -48,9 +49,17 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
                   initialValue: categoria,
-                  decoration: const InputDecoration(labelText: 'Categoría', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(labelText: 'Tipo de negocio', border: OutlineInputBorder()),
                   items: categorias.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
                   onChanged: (v) => setDialog(() => categoria = v!),
+                ),
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    CategoriasNegocio.resumen(categoria),
+                    style: const TextStyle(fontSize: 12, color: Colors.black54, height: 1.3),
+                  ),
                 ),
                 const SizedBox(height: 10),
                 TextField(
@@ -116,6 +125,90 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
           SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
         );
       }
+    }
+  }
+
+  Future<void> _configurarOpciones(String docId, String nombre, Map<String, dynamic> data) async {
+    final categoria = data['categoria']?.toString();
+    var opciones = OpcionesNegocio.desde(categoria, data);
+    final puedeStock = OpcionesNegocio.tipoPuedeStock(categoria);
+    final puedeWhatsapp = CategoriasNegocio.visibleAlPublico(categoria);
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: Text('Opciones · $nombre'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Esto no cambia el tipo de negocio. Solo prende o apaga pasos que a ese local le sobran, o le agrega uno.',
+                  style: TextStyle(fontSize: 13, color: Colors.grey.shade800, height: 1.3),
+                ),
+                if (puedeStock) ...[
+                  const SizedBox(height: 8),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Control de existencias'),
+                    subtitle: const Text('Piezas en inventario y entrada de mercancía'),
+                    value: opciones.stock,
+                    onChanged: (v) => setDialog(() {
+                      opciones = opciones.copiar(stock: v, repisas: v ? opciones.repisas : false);
+                    }),
+                  ),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Repisas / ubicaciones'),
+                    subtitle: const Text('Dónde está cada producto. Si no lo usan, apágalo.'),
+                    value: opciones.repisas,
+                    onChanged: opciones.stock
+                        ? (v) => setDialog(() => opciones = opciones.copiar(repisas: v))
+                        : null,
+                  ),
+                ],
+                if (puedeWhatsapp)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Encargos por WhatsApp'),
+                    subtitle: const Text(
+                      'El cliente ve un botón para escribir. En imprenta sirve para diseños nuevos.',
+                    ),
+                    value: opciones.whatsappEncargos,
+                    onChanged: (v) => setDialog(() => opciones = opciones.copiar(whatsappEncargos: v)),
+                  ),
+                if (!puedeStock && !puedeWhatsapp)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 12),
+                    child: Text('Este tipo no tiene opciones extra.'),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Guardar')),
+          ],
+        ),
+      ),
+    );
+
+    if (ok != true || !mounted) return;
+    try {
+      await FirebaseFirestore.instance.collection('negocios').doc(docId).update({
+        'opciones': opciones.aMapa(),
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Opciones guardadas'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+      );
     }
   }
 
@@ -538,6 +631,7 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
                 }),
                 _btn('Registrar pago', Colors.teal, () => _registrarPagoComision(doc.id, nombre, acumulada)),
                 _btn('Editar', Colors.blueGrey, () => _mostrarFormularioNegocio(docId: doc.id, data: data)),
+                _btn('Opciones', Colors.blueGrey.shade700, () => _configurarOpciones(doc.id, nombre, data)),
                 _btn('Panel', Colors.blueAccent, () {
                   Navigator.push(
                     context,

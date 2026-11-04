@@ -6,6 +6,7 @@ import 'package:angostura_digital/services/negocio_equipo_service.dart';
 import 'package:angostura_digital/utils/negocio_equipo_utils.dart';
 import 'package:angostura_digital/utils/pedidos_historial_utils.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/encargo_utils.dart';
 import 'package:angostura_digital/widgets/pedido_producto_linea.dart';
 import 'package:angostura_digital/widgets/pedido_ubicacion_entrega.dart';
 
@@ -417,6 +418,11 @@ class _HistorialPedidosNegocioScreenState extends State<HistorialPedidosNegocioS
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(PedidosHistorialUtils.formatearFecha(p.fecha), style: const TextStyle(fontSize: 12)),
+            if (p.fechaEncargo != null)
+              Text(
+                'Encargo · ${EncargoUtils.texto(p.fechaEncargo!)}',
+                style: TextStyle(fontSize: 12, color: Colors.deepOrange.shade800, fontWeight: FontWeight.w600),
+              ),
             Text(
               _esBodega
                   ? '${p.estado} · ${p.cantidadArticulos} artículo(s) · Bodega'

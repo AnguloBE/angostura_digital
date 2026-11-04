@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:angostura_digital/widgets/drawer.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
 import 'package:angostura_digital/globals.dart' as globals;
+import 'package:angostura_digital/utils/categorias_negocio.dart';
 
 class AnunciosScreen extends StatefulWidget {
   const AnunciosScreen({super.key});
@@ -142,9 +143,6 @@ class WidgetProductoCard extends StatelessWidget {
     );
   }
 
-  IconData _getIconoCategoria(String? categoria) {
-    if (categoria == 'Restaurante / Comida') return Icons.fastfood;
-    if (categoria == 'Servicios') return Icons.content_cut;
-    return Icons.store;
-  }
+  IconData _getIconoCategoria(String? categoria) =>
+      CategoriasNegocio.icono(categoria);
 }

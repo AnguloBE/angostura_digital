@@ -12,6 +12,7 @@ import 'package:angostura_digital/services/negocio_ingrediente_service.dart';
 import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
 import 'package:angostura_digital/widgets/reservar_cita_sheet.dart';
 import 'package:angostura_digital/utils/orden_productos_utils.dart';
 import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
@@ -45,6 +46,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
   final TextEditingController _busquedaCtrl = TextEditingController();
   String _busqueda = '';
   String _seccionMenu = '';
+  bool _salidaConfirmada = false;
 
   bool get _esBodega => CategoriasNegocio.esBodega(widget.categoriaNegocio);
 
@@ -121,6 +123,22 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
 
   Widget _infoChip(String texto) { return Padding(padding: const EdgeInsets.only(bottom: 4.0), child: Container(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3), decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(6), border: Border.all(color: Colors.grey.shade200)), child: Text(texto, style: const TextStyle(fontSize: 12, color: Colors.black87, fontWeight: FontWeight.w500)))); }
 
+  Future<void> _contactarNegocio(
+    String telefono, {
+    required bool whatsapp,
+    String? mensaje,
+  }) async {
+    final digits = telefono.replaceAll(RegExp(r'[^0-9]'), '');
+    final uri = whatsapp
+        ? Uri.parse(
+            'https://wa.me/$digits${mensaje == null || mensaje.trim().isEmpty ? '' : '?text=${Uri.encodeComponent(mensaje.trim())}'}',
+          )
+        : Uri.parse('tel:${telefono.replaceAll(RegExp(r'[^0-9+]'), '')}');
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    }
+  }
+
   Widget _badgeStock(String texto, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -136,9 +154,57 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
     );
   }
 
+  Future<bool> _preguntarCancelarPedidoLocal() async {
+    final esSalida = _esBodega;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(esSalida ? '¿Cancelar la salida?' : '¿Cancelar el pedido?'),
+        content: Text(
+          esSalida
+              ? 'Si sales, se quitan los productos de esta salida. No queda nada guardado.'
+              : 'Este pedido es para alguien en el local. Si sales, se quita y no pasa a tu carrito.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Seguir aquí'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Sí, cancelar'),
+          ),
+        ],
+      ),
+    );
+    return ok == true;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final cartPedido = context.watch<CartProvider>();
+    return PopScope(
+      canPop: !widget.modoTrabajador ||
+          _salidaConfirmada ||
+          !cartPedido.esPedidoLocal ||
+          cartPedido.items.isEmpty,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (!widget.modoTrabajador) return;
+        final cart = context.read<CartProvider>();
+        if (didPop) {
+          cart.cerrarPedidoLocal();
+          return;
+        }
+        final cancelar = await _preguntarCancelarPedidoLocal();
+        if (!cancelar || !mounted) return;
+        cart.cerrarPedidoLocal();
+        setState(() => _salidaConfirmada = true);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) Navigator.of(context).pop();
+        });
+      },
+      child: Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
         title: Text(
@@ -154,6 +220,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
       floatingActionButton: Consumer<CartProvider>(
         builder: (context, cart, _) {
           if (cart.items.isEmpty) return const SizedBox.shrink();
+          if (!widget.modoTrabajador && cart.esPedidoLocal) return const SizedBox.shrink();
           final piezas =
               cart.items.values.fold<int>(0, (s, i) => s + i.cantidad);
           return FloatingActionButton.extended(
@@ -220,6 +287,17 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
           
           String ubicacion = dataNegocio['ubicacion'] ?? '';
           GeoPoint? ubicacionGeo = dataNegocio['ubicacion_geo'];
+          final descripcionNegocio =
+              (dataNegocio['descripcion'] ?? '').toString().trim();
+          final telefonoNegocio =
+              (dataNegocio['telefono_contacto'] ?? '').toString().trim();
+          final opcionesNegocio = OpcionesNegocio.desde(
+            dataNegocio['categoria']?.toString(),
+            dataNegocio,
+          );
+          final mensajeWhatsapp = CategoriasNegocio.esImprenta(dataNegocio['categoria']?.toString())
+              ? 'Hola, quiero cotizar un trabajo (lona, sticker, uniforme, gorra o bordado).'
+              : 'Hola, quiero hacer un encargo.';
 
           String mensajeTiempo = ''; Color colorTiempo = Colors.grey;
           if (!isAbierto) { mensajeTiempo = '🔴 $estadoCierre'; colorTiempo = Colors.red; } 
@@ -308,6 +386,94 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                   ),
                 ),
 
+              if (!widget.modoTrabajador && opcionesNegocio.whatsappEncargos)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                  color: Colors.green.shade50,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        CategoriasNegocio.esImprenta(dataNegocio['categoria']?.toString())
+                            ? '¿Lona, sticker, uniforme o un diseño nuevo?'
+                            : '¿Un encargo a tu medida?',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green.shade900,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        telefonoNegocio.isEmpty
+                            ? 'Este local todavía no publicó su WhatsApp.'
+                            : 'Escríbele por WhatsApp y te cotizan el trabajo.',
+                        style: TextStyle(fontSize: 13, color: Colors.green.shade900),
+                      ),
+                      if (telefonoNegocio.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.green.shade700,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => _contactarNegocio(
+                            telefonoNegocio,
+                            whatsapp: true,
+                            mensaje: mensajeWhatsapp,
+                          ),
+                          icon: const Icon(Icons.chat),
+                          label: const Text('Escribir por WhatsApp'),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
+              if (!widget.modoTrabajador &&
+                  (descripcionNegocio.isNotEmpty || telefonoNegocio.isNotEmpty))
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (descripcionNegocio.isNotEmpty)
+                        Text(
+                          descripcionNegocio,
+                          style: TextStyle(fontSize: 14, height: 1.35, color: Colors.grey.shade800),
+                        ),
+                      if (telefonoNegocio.isNotEmpty) ...[
+                        if (descripcionNegocio.isNotEmpty) const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            ActionChip(
+                              avatar: const Icon(Icons.call, size: 18),
+                              label: Text(telefonoNegocio),
+                              onPressed: () => _contactarNegocio(telefonoNegocio, whatsapp: false),
+                            ),
+                            ActionChip(
+                              avatar: Icon(Icons.chat, size: 18, color: Colors.green.shade700),
+                              label: const Text('WhatsApp'),
+                              onPressed: () => _contactarNegocio(
+                                telefonoNegocio,
+                                whatsapp: true,
+                                mensaje: opcionesNegocio.whatsappEncargos ? mensajeWhatsapp : null,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                 child: Align(
@@ -315,9 +481,9 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                   child: Text(
                     widget.modoTrabajador
                         ? 'Productos'
-                        : (CategoriasNegocio.esServicios(dataNegocio['categoria'])
-                            ? 'Servicios'
-                            : 'Catálogo'),
+                        : CategoriasNegocio.etiquetaCatalogoPublico(
+                            dataNegocio['categoria']?.toString(),
+                          ),
                     style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -329,9 +495,9 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                   autofocus: widget.modoTrabajador,
                   textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
-                    hintText: esServiciosNeg
-                        ? 'Buscar servicio...'
-                        : 'Buscar por nombre, ingrediente, 600 ml, código...',
+                    hintText: CategoriasNegocio.hintBusqueda(
+                      dataNegocio['categoria']?.toString(),
+                    ),
                     prefixIcon: const Icon(Icons.search),
                     suffixIcon: _busqueda.isNotEmpty
                         ? IconButton(
@@ -381,9 +547,9 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                     final sinSeccion = hayProductosSinSeccion(mapas);
                     final filtrados = productos.where((doc) {
                       final d = doc.data() as Map<String, dynamic>;
+                      if (_busqueda.isNotEmpty) return _coincideBusqueda(d, _busqueda);
                       if (!coincideSeccion(d, _seccionMenu)) return false;
-                      if (_busqueda.isEmpty) return true;
-                      return _coincideBusqueda(d, _busqueda);
+                      return true;
                     }).toList();
                     final visibles = ordenarProductosDocumentos(filtrados);
 
@@ -417,6 +583,55 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                             ],
                           ),
                         ),
+                      );
+                    }
+
+                    if (_busqueda.isNotEmpty) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: Text(
+                              visibles.length == 1
+                                  ? '1 resultado'
+                                  : '${visibles.length} resultados',
+                              style: TextStyle(
+                                color: Colors.grey.shade700,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: LayoutBuilder(
+                              builder: (context, constraints) {
+                                final ancho = anchoTarjetaCuadricula(
+                                  constraints.maxWidth - 32,
+                                );
+                                return ListView(
+                                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+                                  children: [
+                                    Wrap(
+                                      spacing: 12,
+                                      runSpacing: 12,
+                                      children: [
+                                        for (final doc in visibles)
+                                          SizedBox(
+                                            width: ancho,
+                                            child: _tarjetaProducto(
+                                              doc: doc,
+                                              isAbierto: isAbierto,
+                                              dataNegocio: dataNegocio,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       );
                     }
 
@@ -504,6 +719,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
           );
         }
       ),
+    ),
     );
   }
 
@@ -533,8 +749,19 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
       }
       if (data['peso_o_contenido'] != null &&
           data['peso_o_contenido'].toString().isNotEmpty) {
-        extraWidgets.add(_infoChip('Cont: ${data['peso_o_contenido']}'));
+        extraWidgets.add(_infoChip(
+          CategoriasNegocio.esImprenta(dataNegocio['categoria']?.toString())
+              ? 'Medida: ${data['peso_o_contenido']}'
+              : 'Cont: ${data['peso_o_contenido']}',
+        ));
       }
+      final material = data['material']?.toString() ?? '';
+      if (material.isNotEmpty) extraWidgets.add(_infoChip('Material: $material'));
+      if (data['requiere_receta'] == true) {
+        extraWidgets.add(_infoChip('Requiere receta'));
+      }
+      final vence = ProductoPedidoUtils.textoVencimiento(data['fecha_vencimiento']);
+      if (vence != null) extraWidgets.add(_infoChip(vence));
     }
 
     final controlaInventario = !esServicio && data['controla_inventario'] == true;
@@ -623,7 +850,42 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                     _badgeStock('¡Solo quedan $stock!', Colors.orange.shade800),
                   ],
                   const SizedBox(height: 12),
-                  if (isAbierto && !agotado)
+                  if (!widget.modoTrabajador &&
+                      data['cotizar_whatsapp'] == true &&
+                      (dataNegocio['telefono_contacto'] ?? '').toString().trim().isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.green.shade800,
+                            side: BorderSide(color: Colors.green.shade700),
+                          ),
+                          onPressed: () {
+                            final tel = (dataNegocio['telefono_contacto'] ?? '').toString();
+                            final medida = (data['peso_o_contenido'] ?? '').toString().trim();
+                            final mat = (data['material'] ?? '').toString().trim();
+                            final extra = [
+                              if (medida.isNotEmpty) 'Medida: $medida',
+                              if (mat.isNotEmpty) 'Material: $mat',
+                            ].join('. ');
+                            _contactarNegocio(
+                              tel,
+                              whatsapp: true,
+                              mensaje: 'Hola, me interesa "${data['nombre'] ?? ''}". $extra'.trim(),
+                            );
+                          },
+                          icon: const Icon(Icons.chat, size: 18),
+                          label: const Text('Pedir por WhatsApp'),
+                        ),
+                      ),
+                    ),
+                  if (isAbierto &&
+                      !agotado &&
+                      (widget.modoTrabajador ||
+                          data['cotizar_whatsapp'] != true ||
+                          ((data['precio'] as num?) ?? 0) != 0))
                     Align(
                       alignment: Alignment.bottomRight,
                       child: GestureDetector(
@@ -788,7 +1050,9 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
           ElevatedButton(
             onPressed: () {
+              final eraLocal = cart.esPedidoLocal;
               cart.limpiarCarrito();
+              if (eraLocal) cart.iniciarPedidoLocal();
               if (tipoServicio == 'cita' && citaInicio != null) {
                 cart.agregarServicio(
                   negocioId,
@@ -843,7 +1107,9 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
               foregroundColor: Colors.white,
             ),
             onPressed: () {
+              final eraLocal = cart.esPedidoLocal;
               cart.limpiarCarrito();
+              if (eraLocal) cart.iniciarPedidoLocal();
               cart.agregarProducto(
                 negocioId,
                 prodId,

@@ -11,15 +11,19 @@ import 'package:angostura_digital/screens/historial_pedidos_negocio_screen.dart'
 import 'package:angostura_digital/screens/surtir_pedido_screen.dart';
 import 'package:angostura_digital/utils/pedidos_historial_utils.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/encargo_utils.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
 import 'package:angostura_digital/utils/pedido_servicios_utils.dart';
 import 'package:angostura_digital/utils/pedido_mostrador_utils.dart';
 import 'package:angostura_digital/widgets/editar_pedido_mostrador_dialog.dart';
+import 'package:angostura_digital/widgets/aviso_pedidos_negocio.dart';
 
 class PedidosNegocioScreen extends StatelessWidget {
   final String negocioId;
   final String nombreNegocio;
   final bool puedeVerHistorial;
   final String categoria;
+  final bool abrirEncargos;
 
   const PedidosNegocioScreen({
     super.key,
@@ -27,6 +31,7 @@ class PedidosNegocioScreen extends StatelessWidget {
     required this.nombreNegocio,
     this.puedeVerHistorial = false,
     this.categoria = '',
+    this.abrirEncargos = false,
   });
 
   bool get _puedeVentaEnLocal => CategoriasNegocio.puedeVentaEnLocal(categoria);
@@ -34,7 +39,7 @@ class PedidosNegocioScreen extends StatelessWidget {
   bool get _sinDinero => CategoriasNegocio.sinRegistroDinero(categoria);
 
   void _abrirNuevoPedidoMostrador(BuildContext context) {
-    context.read<CartProvider>().limpiarCarrito();
+    context.read<CartProvider>().iniciarPedidoLocal();
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -147,6 +152,14 @@ class PedidosNegocioScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return ConOpcionesNegocio(
+      negocioId: negocioId,
+      categoria: categoria,
+      builder: (context, opciones) => _cuerpo(context, opciones),
+    );
+  }
+
+  Widget _cuerpo(BuildContext context, OpcionesNegocio opciones) {
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -182,16 +195,13 @@ class PedidosNegocioScreen extends StatelessWidget {
               onPressed: () => _abrirNuevoPedidoMostrador(context),
               backgroundColor: _esBodega ? Colors.brown.shade700 : Colors.indigo,
               foregroundColor: Colors.white,
-              icon: Icon(_esBodega
-                  ? Icons.output
-                  : (CategoriasNegocio.usaInventario(categoria)
-                      ? Icons.point_of_sale
-                      : Icons.add_shopping_cart)),
+              icon: Icon(CategoriasNegocio.iconoVentaEnLocal(categoria)),
               label: Text(CategoriasNegocio.etiquetaVentaEnLocal(categoria)),
             )
           : null,
       body: Column(
         children: [
+          if (_esBodega || _esNegocioServicios)
           Material(
             color: Colors.blueGrey.shade50,
             child: Padding(
@@ -221,7 +231,7 @@ class PedidosNegocioScreen extends StatelessWidget {
         stream: FirebaseFirestore.instance
             .collection('pedidos')
             .where('negocio_id', isEqualTo: negocioId)
-            .limit(80)
+            .limit(200)
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -232,13 +242,41 @@ class PedidosNegocioScreen extends StatelessWidget {
             return PedidosHistorialUtils.esPedidoEnVentanaActiva(data);
           }).toList();
           
-          pedidos.sort((a, b) {
+          final mostrarEncargos = !_esBodega && !_esNegocioServicios;
+          final ahora = <QueryDocumentSnapshot>[];
+          final encargos = <QueryDocumentSnapshot>[];
+          for (final doc in pedidos) {
+            final data = doc.data() as Map<String, dynamic>;
+            if (mostrarEncargos && EncargoUtils.abierto(data)) {
+              encargos.add(doc);
+              if (EncargoUtils.esParaAhora(data)) ahora.add(doc);
+            } else {
+              ahora.add(doc);
+            }
+          }
+          ahora.sort((a, b) {
             final fechaA = (a.data() as Map<String, dynamic>)['fecha'] as Timestamp?;
             final fechaB = (b.data() as Map<String, dynamic>)['fecha'] as Timestamp?;
-            if (fechaA == null) return -1; if (fechaB == null) return 1; return fechaB.compareTo(fechaA);
+            if (fechaA == null) return -1;
+            if (fechaB == null) return 1;
+            return fechaB.compareTo(fechaA);
+          });
+          encargos.sort((a, b) {
+            final ea = EncargoUtils.leerFecha((a.data() as Map<String, dynamic>)['fecha_encargo']);
+            final eb = EncargoUtils.leerFecha((b.data() as Map<String, dynamic>)['fecha_encargo']);
+            if (ea == null && eb == null) return 0;
+            if (ea == null) return 1;
+            if (eb == null) return -1;
+            return ea.compareTo(eb);
           });
 
-          if (pedidos.isEmpty) {
+          return _BandejaPedidos(
+            mostrarEncargos: mostrarEncargos,
+            abrirEncargos: abrirEncargos,
+            ahora: ahora,
+            encargos: encargos,
+            contenido: (lista, verEncargos) {
+          if (lista.isEmpty) {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -248,16 +286,20 @@ class PedidosNegocioScreen extends StatelessWidget {
                     Icon(Icons.inbox, size: 80, color: Colors.grey.shade300),
                     const SizedBox(height: 12),
                     Text(
-                      _esNegocioServicios
-                          ? 'No hay citas en las últimas 24 horas'
-                          : 'No hay pedidos en las últimas 24 horas',
+                      verEncargos
+                          ? 'No hay encargos pendientes'
+                          : (_esNegocioServicios
+                              ? 'No hay citas en las últimas 24 horas'
+                              : 'No hay pedidos en las últimas 24 horas'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                           color: Colors.grey, fontSize: 16, fontWeight: FontWeight.w600),
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Si cerraste tarde o buscas pedidos de ayer, revísalos en el historial.',
+                      verEncargos
+                          ? 'Cuando alguien pida para otro día, aparece aquí hasta que lo entregues.'
+                          : 'Si cerraste tarde o buscas pedidos de ayer, revísalos en el historial.',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
                     ),
@@ -287,9 +329,9 @@ class PedidosNegocioScreen extends StatelessWidget {
 
           return ListView.builder(
             padding: const EdgeInsets.all(12),
-            itemCount: pedidos.length,
+            itemCount: lista.length,
             itemBuilder: (context, index) {
-              final doc = pedidos[index];
+              final doc = lista[index];
               final data = doc.data() as Map<String, dynamic>;
               final estadoActual = data['estado'] ?? 'Pendiente';
               final notas = data['notas'] ?? '';
@@ -322,7 +364,26 @@ class PedidosNegocioScreen extends StatelessWidget {
               // Coordenadas de entrega (GeoPoint, campos planos o pedidos antiguos)
               final coordsEntrega = PedidoUbicacionUtils.resolverEntrega(data);
 
-              return Card(
+              final grupo = verEncargos ? EncargoUtils.cuando(data) : null;
+              final grupoAnterior = verEncargos && index > 0
+                  ? EncargoUtils.cuando((lista[index - 1].data() as Map<String, dynamic>))
+                  : null;
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (grupo != null && grupo != grupoAnterior)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8, top: 4),
+                      child: Text(
+                        grupo,
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: grupo == 'Atrasados' ? Colors.red.shade800 : Colors.deepOrange.shade800,
+                        ),
+                      ),
+                    ),
+                  Card(
                 elevation: 3, margin: const EdgeInsets.only(bottom: 16),
                 child: Padding(
                   padding: const EdgeInsets.all(16),
@@ -357,6 +418,7 @@ class PedidosNegocioScreen extends StatelessWidget {
                       ),
                       
                       const SizedBox(height: 15),
+                      if (EncargoUtils.banner(data) != null) EncargoUtils.banner(data)!,
                       
                       if (_esNegocioServicios && metodoEntrega == 'cita')
                         _buildBloqueCita(data)
@@ -472,8 +534,7 @@ class PedidosNegocioScreen extends StatelessWidget {
                       const Divider(height: 25),
                       if (data['productos'] != null) ...[
                         Builder(builder: (context) {
-                          final esProductos =
-                              CategoriasNegocio.usaInventario(categoria);
+                          final esProductos = opciones.stock;
                           final surtidoLineas =
                               (data['surtido_lineas'] as Map?) ?? {};
                           final productos = data['productos'] as List<dynamic>;
@@ -550,7 +611,7 @@ class PedidosNegocioScreen extends StatelessWidget {
                           );
                         }),
                       ],
-                      if (CategoriasNegocio.usaInventario(categoria) &&
+                      if (opciones.stock &&
                           data['productos'] != null &&
                           estadoActual != 'Cancelado') ...[
                         const SizedBox(height: 10),
@@ -654,7 +715,11 @@ class PedidosNegocioScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                  ),
+                ],
               );
+            },
+          );
             },
           );
         },
@@ -1011,6 +1076,145 @@ class PedidosNegocioScreen extends StatelessWidget {
               else _actualizarEstado(context, pedidoId, nuevoEstado);
             }
           },
+        ),
+      ),
+    );
+  }
+}
+
+enum _Bandeja { ahora, encargos }
+
+class _BandejaPedidos extends StatefulWidget {
+  final bool mostrarEncargos;
+  final bool abrirEncargos;
+  final List<QueryDocumentSnapshot> ahora;
+  final List<QueryDocumentSnapshot> encargos;
+  final Widget Function(List<QueryDocumentSnapshot> lista, bool verEncargos) contenido;
+
+  const _BandejaPedidos({
+    required this.mostrarEncargos,
+    required this.abrirEncargos,
+    required this.ahora,
+    required this.encargos,
+    required this.contenido,
+  });
+
+  @override
+  State<_BandejaPedidos> createState() => _BandejaPedidosState();
+}
+
+class _BandejaPedidosState extends State<_BandejaPedidos> {
+  late _Bandeja _bandeja;
+
+  @override
+  void initState() {
+    super.initState();
+    _bandeja = widget.abrirEncargos ? _Bandeja.encargos : _Bandeja.ahora;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final verEncargos = widget.mostrarEncargos && _bandeja == _Bandeja.encargos;
+    final lista = verEncargos ? widget.encargos : widget.ahora;
+    final aviso = AvisoBandeja.desde(
+      widget.encargos.map((d) => d.data() as Map<String, dynamic>),
+    );
+    // El resumen solo mira encargos; los pendientes se cuentan en Ahora.
+    final pendientes = widget.ahora.where((d) {
+      final data = d.data() as Map<String, dynamic>;
+      return (data['estado'] ?? '') == 'Pendiente';
+    }).length;
+
+    return Column(
+      children: [
+        if (widget.mostrarEncargos)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _pestana(
+                    titulo: 'Ahora',
+                    cantidad: pendientes,
+                    urgente: pendientes > 0,
+                    activa: !verEncargos,
+                    onTap: () => setState(() => _bandeja = _Bandeja.ahora),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _pestana(
+                    titulo: 'Encargos',
+                    cantidad: widget.encargos.length,
+                    urgente: aviso.encargosUrgentes,
+                    activa: verEncargos,
+                    onTap: () => setState(() => _bandeja = _Bandeja.encargos),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (widget.mostrarEncargos && !verEncargos && widget.encargos.isNotEmpty)
+          Material(
+            color: aviso.encargosUrgentes ? Colors.red.shade50 : Colors.deepOrange.shade50,
+            child: InkWell(
+              onTap: () => setState(() => _bandeja = _Bandeja.encargos),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.event_available,
+                      size: 18,
+                      color: aviso.encargosUrgentes ? Colors.red.shade800 : Colors.deepOrange.shade800,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        aviso.resumenEncargos,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: aviso.encargosUrgentes ? Colors.red.shade900 : Colors.deepOrange.shade900,
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        Expanded(child: widget.contenido(lista, verEncargos)),
+      ],
+    );
+  }
+
+  Widget _pestana({
+    required String titulo,
+    required int cantidad,
+    required bool urgente,
+    required bool activa,
+    required VoidCallback onTap,
+  }) {
+    final color = activa ? Colors.blueGrey.shade800 : Colors.blueGrey.shade600;
+    return Material(
+      color: activa ? Colors.blueGrey.shade50 : Colors.grey.shade100,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(titulo, style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+              if (cantidad > 0) ...[
+                const SizedBox(width: 8),
+                EncargoUtils.burbuja(cantidad, urgente: urgente),
+              ],
+            ],
+          ),
         ),
       ),
     );

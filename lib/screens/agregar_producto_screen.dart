@@ -11,6 +11,7 @@ import 'package:angostura_digital/screens/ingredientes_negocio_screen.dart';
 import 'package:angostura_digital/screens/ubicaciones_negocio_screen.dart';
 import 'package:angostura_digital/screens/escaner_codigo_screen.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
 import 'package:angostura_digital/utils/seccion_producto_utils.dart';
 import 'package:angostura_digital/widgets/agregar_stock_producto_dialog.dart';
 import 'package:angostura_digital/widgets/selector_seccion.dart';
@@ -43,7 +44,9 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
   late TextEditingController _descCtrl;
   late TextEditingController _ingredientesCtrl; 
   late TextEditingController _codigoBarrasCtrl; 
-  late TextEditingController _gramosCtrl; 
+  late TextEditingController _gramosCtrl;
+  late TextEditingController _materialCtrl;
+  late TextEditingController _piezasCtrl; 
 
   String? _fotoUrlExistente;
   Uint8List? _imagenBytes;
@@ -61,16 +64,22 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
   // Si el producto no tiene código de barras (no se pide ni se exige).
   bool _sinCodigo = false;
   bool _destacado = false;
+  bool _requiereReceta = false;
+  bool _cotizarWhatsapp = false;
+  DateTime? _vence;
   String _seccion = '';
+  late OpcionesNegocio _opciones;
 
   bool get _usaIngredientes =>
       NegocioIngredienteService.usaIngredientes(widget.categoriaNegocio);
 
   bool get _esBodega => CategoriasNegocio.esBodega(widget.categoriaNegocio);
 
-  bool get _esProductos =>
-      CategoriasNegocio.usaInventario(widget.categoriaNegocio) &&
-      !_usaIngredientes;
+  bool get _esProductos => _opciones.stock && !_usaIngredientes;
+
+  bool get _esFarmacia => CategoriasNegocio.esFarmacia(widget.categoriaNegocio);
+
+  bool get _esImprenta => CategoriasNegocio.esImprenta(widget.categoriaNegocio);
 
   int get _stockTotal => _filasInventario.fold(
         0,
@@ -80,6 +89,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
   @override
   void initState() {
     super.initState();
+    _opciones = OpcionesNegocio.porDefecto(widget.categoriaNegocio);
     // Si mandaron datos, llenamos los campos para editar
     _nombreCtrl = TextEditingController(text: widget.productoData?['nombre'] ?? '');
     _precioCtrl = TextEditingController(text: widget.productoData?['precio']?.toString() ?? '');
@@ -87,8 +97,22 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     _ingredientesCtrl = TextEditingController(text: widget.productoData?['ingredientes'] ?? '');
     _codigoBarrasCtrl = TextEditingController(text: widget.productoData?['codigo_barras'] ?? '');
     _gramosCtrl = TextEditingController(text: widget.productoData?['peso_o_contenido'] ?? '');
+    _materialCtrl = TextEditingController(text: widget.productoData?['material'] ?? '');
+    _piezasCtrl = TextEditingController(
+      text: widget.productoData == null
+          ? ''
+          : NegocioUbicacionService.stockTotal(widget.productoData!).toString(),
+    );
+    _cotizarWhatsapp = widget.productoData == null
+        ? CategoriasNegocio.esImprenta(widget.categoriaNegocio)
+        : widget.productoData?['cotizar_whatsapp'] == true;
     _fotoUrlExistente = widget.productoData?['foto_url'];
     _destacado = widget.productoData?['destacado'] == true;
+    _requiereReceta = widget.productoData?['requiere_receta'] == true;
+    final venceRaw = widget.productoData?['fecha_vencimiento']?.toString();
+    if (venceRaw != null && venceRaw.isNotEmpty) {
+      _vence = DateTime.tryParse(venceRaw);
+    }
     _seccion = widget.productoData == null
         ? ''
         : seccionProducto(widget.productoData!);
@@ -108,6 +132,21 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
 
     _cargarCatalogoUbicaciones();
     if (_usaIngredientes) _cargarCatalogoIngredientes();
+    _cargarOpciones();
+  }
+
+  Future<void> _cargarOpciones() async {
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection('negocios')
+          .doc(widget.negocioId)
+          .get();
+      if (!mounted) return;
+      setState(() {
+        _opciones = OpcionesNegocio.desde(widget.categoriaNegocio, doc.data());
+      });
+      if (_opciones.stock) _cargarCatalogoUbicaciones();
+    } catch (_) {}
   }
 
   void _preservarScroll(VoidCallback actualizar) {
@@ -137,6 +176,8 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
   @override
   void dispose() {
     _scrollCtrl.dispose();
+    _materialCtrl.dispose();
+    _piezasCtrl.dispose();
     for (final f in _filasInventario) {
       f.cantidadCtrl.dispose();
     }
@@ -288,15 +329,21 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
           'ingredientes_lista': _ingredientesSeleccionados.toList(),
         };
       } else if (_esProductos) {
-        final ubicaciones = _filasInventario
-            .where((f) =>
-                (f.lugar ?? '').isNotEmpty &&
-                (int.tryParse(f.cantidadCtrl.text.trim()) ?? 0) > 0)
-            .map((f) => StockUbicacion(
-                  lugar: f.lugar!,
-                  cantidad: int.tryParse(f.cantidadCtrl.text.trim()) ?? 0,
-                ))
-            .toList();
+        final List<StockUbicacion> ubicaciones;
+        if (_opciones.repisas) {
+          ubicaciones = _filasInventario
+              .where((f) =>
+                  (f.lugar ?? '').isNotEmpty &&
+                  (int.tryParse(f.cantidadCtrl.text.trim()) ?? 0) > 0)
+              .map((f) => StockUbicacion(
+                    lugar: f.lugar!,
+                    cantidad: int.tryParse(f.cantidadCtrl.text.trim()) ?? 0,
+                  ))
+              .toList();
+        } else {
+          final n = int.tryParse(_piezasCtrl.text.trim()) ?? 0;
+          ubicaciones = [StockUbicacion(lugar: 'General', cantidad: n)];
+        }
         datosExtras = {
           'codigo_barras': _sinCodigo ? '' : _codigoBarrasCtrl.text.trim(),
           'sin_codigo': _sinCodigo,
@@ -304,6 +351,11 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
           'controla_inventario': true,
           'ubicaciones': ubicaciones.map((u) => u.toMap()).toList(),
           'stock_total': NegocioUbicacionService.sumarCantidades(ubicaciones),
+        };
+      } else if (_gramosCtrl.text.trim().isNotEmpty) {
+        datosExtras = {
+          'peso_o_contenido': _gramosCtrl.text.trim(),
+          'controla_inventario': false,
         };
       }
 
@@ -318,6 +370,25 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
         'categoria_negocio': widget.categoriaNegocio,
         ...datosExtras,
       };
+
+      if (_esImprenta) {
+        datosProducto['material'] = _materialCtrl.text.trim();
+        datosProducto['cotizar_whatsapp'] = _cotizarWhatsapp;
+        if (_cotizarWhatsapp && (datosProducto['precio'] as num) == 0) {
+          datosProducto['precio'] = double.tryParse(_precioCtrl.text.trim()) ?? 0.0;
+        }
+      }
+
+      if (_esFarmacia) {
+        datosProducto['requiere_receta'] = _requiereReceta;
+        if (_vence != null) {
+          final d = _vence!;
+          datosProducto['fecha_vencimiento'] =
+              '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+        } else if (widget.productoId != null) {
+          datosProducto['fecha_vencimiento'] = FieldValue.delete();
+        }
+      }
 
       if (widget.productoId == null) {
         // CREAR NUEVO
@@ -521,19 +592,31 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
       const SizedBox(height: 8),
       TextFormField(
         controller: _gramosCtrl,
-        decoration: const InputDecoration(
-          labelText: 'Presentación / medida (opcional)',
-          hintText: 'Ej. 600 ml, 1 L, paquete',
-          border: OutlineInputBorder(),
-          prefixIcon: Icon(Icons.straighten),
+        decoration: InputDecoration(
+          labelText: _esImprenta ? 'Medida (opcional)' : 'Presentación / medida (opcional)',
+          hintText: _esImprenta ? 'Ej. 2 x 1 m, carta, talla M' : 'Ej. 600 ml, 1 L, paquete',
+          border: const OutlineInputBorder(),
+          prefixIcon: const Icon(Icons.straighten),
         ),
       ),
       const SizedBox(height: 20),
+      if (!_opciones.repisas)
+        TextFormField(
+          controller: _piezasCtrl,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            labelText: 'Piezas en existencia',
+            hintText: 'Cuántas hay, sin anotar la repisa',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.inventory_2_outlined),
+          ),
+        )
+      else ...[
       Row(
         children: [
           const Expanded(
             child: Text(
-              'Inventario y ubicaciones',
+              'Dónde está y cuántas piezas',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
           ),
@@ -550,13 +633,13 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
               ).then((_) => _cargarCatalogoUbicaciones());
             },
             icon: const Icon(Icons.settings, size: 18),
-            label: const Text('Administrar'),
+            label: const Text('Repisas'),
           ),
         ],
       ),
       const Text(
-        'Indica en qué repisa(s) está y cuántas piezas hay en cada una. '
-        'Un mismo producto puede estar en varias ubicaciones.',
+        'Indica en qué repisa está y cuántas piezas hay. '
+        'Si este local no usa repisas, el administrador puede apagarlas.',
         style: TextStyle(fontSize: 13, color: Colors.grey),
       ),
       const SizedBox(height: 10),
@@ -629,10 +712,13 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
           ),
         ],
       ),
+      ],
       Align(
         alignment: Alignment.centerRight,
         child: Text(
-          'Total en inventario: $_stockTotal pza(s)',
+          _opciones.repisas
+              ? 'Total en inventario: $_stockTotal pza(s)'
+              : 'Existencia: ${int.tryParse(_piezasCtrl.text.trim()) ?? 0} pza(s)',
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
       ),
@@ -782,6 +868,102 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     ];
   }
 
+  List<Widget> _seccionImprenta() {
+    return [
+      const Divider(),
+      const Text(
+        'Trabajo de imprenta',
+        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+      ),
+      const SizedBox(height: 4),
+      const Text(
+        'Secciones útiles: Lonas, Stickers, Uniformes, Gorras, Bordados.',
+        style: TextStyle(fontSize: 13, color: Colors.grey),
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _materialCtrl,
+        decoration: const InputDecoration(
+          labelText: 'Material (opcional)',
+          hintText: 'Ej. lona, vinil, algodón, bordado',
+          border: OutlineInputBorder(),
+        ),
+      ),
+      if (!_opciones.stock) ...[
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _gramosCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Medida (opcional)',
+            hintText: 'Ej. 2 x 1 m, carta, talla M',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.straighten),
+          ),
+        ),
+      ],
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Se cotiza por WhatsApp'),
+        subtitle: const Text('El cliente puede escribir para un diseño o una medida distinta'),
+        value: _cotizarWhatsapp,
+        activeThumbColor: Colors.green.shade700,
+        secondary: Icon(Icons.chat, color: Colors.green.shade700),
+        onChanged: (v) => setState(() => _cotizarWhatsapp = v),
+      ),
+    ];
+  }
+
+  String _fechaLegible(DateTime d) => '${d.day}/${d.month}/${d.year}';
+
+  List<Widget> _seccionFarmacia() {
+    final vence = _vence;
+    final vencido = vence != null &&
+        DateTime(vence.year, vence.month, vence.day)
+            .isBefore(DateTime(DateTime.now().year, DateTime.now().month, DateTime.now().day));
+    return [
+      const SizedBox(height: 8),
+      SwitchListTile(
+        contentPadding: EdgeInsets.zero,
+        title: const Text('Requiere receta'),
+        subtitle: const Text('El cliente y el mostrador ven el aviso antes de despachar'),
+        value: _requiereReceta,
+        activeThumbColor: Colors.teal.shade700,
+        secondary: Icon(Icons.assignment_outlined, color: Colors.teal.shade700),
+        onChanged: (v) => setState(() => _requiereReceta = v),
+      ),
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(
+          Icons.event_busy,
+          color: vencido ? Colors.red.shade700 : Colors.teal.shade700,
+        ),
+        title: Text(vence == null ? 'Sin fecha de vencimiento' : 'Vence el ${_fechaLegible(vence)}'),
+        subtitle: Text(
+          vencido ? 'Esta fecha ya pasó' : 'Opcional. Sirve para no despachar lotes vencidos.',
+          style: TextStyle(color: vencido ? Colors.red.shade700 : null),
+        ),
+        trailing: vence == null
+            ? null
+            : IconButton(
+                tooltip: 'Quitar fecha',
+                icon: const Icon(Icons.close),
+                onPressed: () => setState(() => _vence = null),
+              ),
+        onTap: () async {
+          final hoy = DateTime.now();
+          final elegida = await showDatePicker(
+            context: context,
+            initialDate: vence ?? hoy,
+            firstDate: DateTime(hoy.year - 1),
+            lastDate: DateTime(hoy.year + 8),
+            helpText: 'Fecha de vencimiento',
+          );
+          if (elegida != null) setState(() => _vence = elegida);
+        },
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -806,7 +988,20 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
               TextFormField(controller: _nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre del producto', border: OutlineInputBorder()), validator: (val) => val!.isEmpty ? 'Requerido' : null),
               if (!_esBodega) ...[
                 const SizedBox(height: 12),
-                TextFormField(controller: _precioCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Precio (\$)', border: OutlineInputBorder()), validator: (val) => val!.isEmpty ? 'Requerido' : null),
+                TextFormField(
+                  controller: _precioCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: _cotizarWhatsapp ? 'Precio (\$) — 0 si solo se cotiza' : 'Precio (\$)',
+                    border: const OutlineInputBorder(),
+                  ),
+                  validator: (val) {
+                    if ((val ?? '').trim().isEmpty) {
+                      return _cotizarWhatsapp ? null : 'Requerido';
+                    }
+                    return null;
+                  },
+                ),
               ],
               const SizedBox(height: 12),
               TextFormField(controller: _descCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Descripción corta', border: OutlineInputBorder())),
@@ -829,6 +1024,8 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
               
               if (_usaIngredientes) ..._seccionIngredientes(),
               if (_esProductos) ..._seccionInventario(),
+              if (_esImprenta) ..._seccionImprenta(),
+              if (_esFarmacia) ..._seccionFarmacia(),
 
               const SizedBox(height: 30),
               if (_isLoading) const Center(child: CircularProgressIndicator()) 

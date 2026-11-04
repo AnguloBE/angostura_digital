@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart' show Color, Colors;
 import 'package:angostura_digital/utils/pedido_ubicacion_utils.dart';
 import 'package:angostura_digital/utils/pedido_servicios_utils.dart';
+import 'package:angostura_digital/utils/encargo_utils.dart';
 
 enum PeriodoPedidosHistorial { hoy, semana, mes, todos }
 
@@ -33,6 +34,8 @@ class PedidoHistorialItem {
   final bool entregaConfirmadaMapa;
   final bool tieneCita;
   final String? tipoNegocio;
+  final DateTime? fechaEncargo;
+  final String detalleEncargo;
 
   const PedidoHistorialItem({
     required this.id,
@@ -58,6 +61,8 @@ class PedidoHistorialItem {
     this.entregaConfirmadaMapa = false,
     this.tieneCita = false,
     this.tipoNegocio,
+    this.fechaEncargo,
+    this.detalleEncargo = '',
   });
 
   factory PedidoHistorialItem.desdeDoc(String id, Map<String, dynamic> data) {
@@ -99,6 +104,10 @@ class PedidoHistorialItem {
       entregaConfirmadaMapa: data['entrega_confirmada_mapa'] == true,
       tieneCita: data['tiene_cita'] == true,
       tipoNegocio: data['tipo_negocio']?.toString(),
+      fechaEncargo: data['es_encargo'] == true
+          ? EncargoUtils.leerFecha(data['fecha_encargo'])
+          : null,
+      detalleEncargo: (data['detalle_encargo'] ?? '').toString(),
     );
   }
 
@@ -223,6 +232,7 @@ class PedidosHistorialUtils {
   static const Duration ventanaPedidosActivosNegocio = Duration(hours: 24);
 
   static bool esPedidoEnVentanaActiva(Map<String, dynamic> data, {DateTime? ahora}) {
+    if (EncargoUtils.sigueVigente(data, ahora: ahora)) return true;
     final ts = data['fecha'];
     if (ts is! Timestamp) return false;
     final fecha = ts.toDate().toLocal();
@@ -231,6 +241,16 @@ class PedidosHistorialUtils {
   }
 
   static bool esPedidoEnVentanaActivaItem(PedidoHistorialItem p, {DateTime? ahora}) {
+    if (p.fechaEncargo != null) {
+      final estado = p.estado;
+      final cerrado = estado == 'Entregado' ||
+          estado == 'Cancelado' ||
+          estado == PedidoServiciosUtils.estadoConfirmada;
+      if (!cerrado) {
+        final limite = (ahora ?? DateTime.now()).subtract(ventanaPedidosActivosNegocio);
+        if (!p.fechaEncargo!.isBefore(limite)) return true;
+      }
+    }
     final fecha = p.fecha;
     if (fecha == null) return false;
     final limite = (ahora ?? DateTime.now()).subtract(ventanaPedidosActivosNegocio);

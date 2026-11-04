@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -25,6 +26,9 @@ import 'package:angostura_digital/screens/horario_citas_negocio_screen.dart';
 import 'package:angostura_digital/services/negocio_ingrediente_service.dart';
 import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
+import 'package:angostura_digital/utils/encargo_utils.dart';
+import 'package:angostura_digital/widgets/aviso_pedidos_negocio.dart';
 import 'package:angostura_digital/utils/orden_productos_utils.dart';
 import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
 import 'package:angostura_digital/utils/cuadricula_ancho.dart';
@@ -58,19 +62,36 @@ class GestionarNegocioScreen extends StatefulWidget {
 class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
   late TextEditingController _nombreCtrl;
   late TextEditingController _ubicacionCtrl;
+  late TextEditingController _descCtrl;
+  late TextEditingController _telefonoCtrl;
   final TextEditingController _busquedaCatalogoCtrl = TextEditingController();
   String _busquedaCatalogo = '';
   String _seccionCatalogo = '';
   int _topeCatalogo = 24;
   GeoPoint? _ubicacionGeo; 
   bool _isLoading = false;
-  bool _datosCargados = false; 
+  bool _datosCargados = false;
+  late OpcionesNegocio _opciones;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _opcionesSub; 
 
   @override
   void initState() {
     super.initState();
     _nombreCtrl = TextEditingController(text: widget.nombreActual);
     _ubicacionCtrl = TextEditingController();
+    _descCtrl = TextEditingController();
+    _telefonoCtrl = TextEditingController();
+    _opciones = OpcionesNegocio.porDefecto(widget.categoria);
+    _opcionesSub = FirebaseFirestore.instance
+        .collection('negocios')
+        .doc(widget.negocioId)
+        .snapshots()
+        .listen((doc) {
+      if (!mounted) return;
+      setState(() {
+        _opciones = OpcionesNegocio.desde(widget.categoria, doc.data());
+      });
+    });
     NegocioEquipoService.migrarPropietarioLegacy(widget.negocioId);
     NotificacionesService.refrescarToken();
   }
@@ -79,7 +100,10 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
   void dispose() {
     _nombreCtrl.dispose();
     _ubicacionCtrl.dispose();
+    _descCtrl.dispose();
+    _telefonoCtrl.dispose();
     _busquedaCatalogoCtrl.dispose();
+    _opcionesSub?.cancel();
     super.dispose();
   }
 
@@ -180,8 +204,10 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     setState(() => _isLoading = true);
     
     Map<String, dynamic> datosAActualizar = {
-      'nombre': _nombreCtrl.text.trim(), 
-      'ubicacion': _ubicacionCtrl.text.trim()
+      'nombre': _nombreCtrl.text.trim(),
+      'ubicacion': _ubicacionCtrl.text.trim(),
+      'descripcion': _descCtrl.text.trim(),
+      'telefono_contacto': _telefonoCtrl.text.trim(),
     };
     
     if (_ubicacionGeo != null) {
@@ -264,6 +290,366 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     );
   }
 
+  Future<void> _abrirHorarioGuardado() async {
+    final doc = await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).get();
+    if (!mounted) return;
+    await _abrirConfiguracionHorario(doc.data()?['horario'] as Map<String, dynamic>?);
+  }
+
+  void _irPedidos({bool encargos = false}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PedidosNegocioScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+          puedeVerHistorial: true,
+          categoria: widget.categoria,
+          abrirEncargos: encargos,
+        ),
+      ),
+    );
+  }
+
+  void _irHistorial() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HistorialPedidosNegocioScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+          categoria: widget.categoria,
+        ),
+      ),
+    );
+  }
+
+  void _irEnvios() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ConfigurarEnviosScreen(negocioId: widget.negocioId),
+      ),
+    );
+  }
+
+  void _irPromo() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AgregarPromocionScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+        ),
+      ),
+    );
+  }
+
+  void _irIngredientes() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => IngredientesNegocioScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+        ),
+      ),
+    );
+  }
+
+  void _irHorarioCitas() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HorarioCitasNegocioScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+        ),
+      ),
+    );
+  }
+
+  void _irUbicaciones() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => UbicacionesNegocioScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+        ),
+      ),
+    );
+  }
+
+  void _irMercancia() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AgregarMercanciaScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+        ),
+      ),
+    );
+  }
+
+  void _irEquipo() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EquipoNegocioScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+        ),
+      ),
+    );
+  }
+
+  void _irVentaLocal() {
+    context.read<CartProvider>().iniciarPedidoLocal();
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MenuNegocioScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+          modoTrabajador: true,
+          categoriaNegocio: widget.categoria,
+        ),
+      ),
+    );
+  }
+
+  void _irMenuPublico() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => MenuNegocioScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+          categoriaNegocio: widget.categoria,
+        ),
+      ),
+    );
+  }
+
+  String get _nombreVisible {
+    final escrito = _nombreCtrl.text.trim();
+    return escrito.isEmpty ? widget.nombreActual : escrito;
+  }
+
+  Future<void> _configurarCobros() async {
+    final doc = await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).get();
+    if (!mounted) return;
+    const opciones = ['efectivo', 'tarjeta', 'transferencia'];
+    const etiquetas = {
+      'efectivo': 'Efectivo',
+      'tarjeta': 'Tarjeta (terminal)',
+      'transferencia': 'Transferencia',
+    };
+    final seleccion = ((doc.data()?['metodos_pago'] as List?) ?? const ['efectivo'])
+        .map((e) => e.toString())
+        .where(opciones.contains)
+        .toSet();
+    if (seleccion.isEmpty) seleccion.add('efectivo');
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: const Text('Cómo cobras'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'El cliente verá estas opciones al reservar o pedir.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              for (final m in opciones)
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: seleccion.contains(m),
+                  title: Text(etiquetas[m] ?? m),
+                  onChanged: (v) => setDialog(() {
+                    if (v == true) {
+                      seleccion.add(m);
+                    } else if (seleccion.length > 1) {
+                      seleccion.remove(m);
+                    }
+                  }),
+                ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Guardar')),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update({
+      'metodos_pago': opciones.where(seleccion.contains).toList(),
+    });
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Formas de cobro guardadas'), backgroundColor: Colors.green),
+    );
+  }
+
+  List<_AccionPanel> _accionesPanel(AvisoBandeja aviso) {
+    final cat = widget.categoria;
+    final acciones = <_AccionPanel>[];
+    void add(IconData icono, String titulo, VoidCallback onTap, {int aviso = 0, bool urgente = false}) {
+      acciones.add(_AccionPanel(
+        icono: icono,
+        titulo: titulo,
+        onTap: onTap,
+        aviso: aviso,
+        urgente: urgente,
+      ));
+    }
+
+    if (CategoriasNegocio.esBodega(cat)) {
+      add(Icons.receipt_long, 'Salidas', _irPedidos, aviso: aviso.pendientesAhora, urgente: true);
+      add(Icons.analytics_outlined, 'Historial', _irHistorial);
+      if (_opciones.repisas) add(Icons.shelves, 'Repisas', _irUbicaciones);
+      if (_opciones.stock) add(Icons.inventory_2, 'Entrada de mercancía', _irMercancia);
+    } else if (CategoriasNegocio.esServicios(cat)) {
+      add(Icons.analytics_outlined, 'Historial', _irHistorial);
+      add(Icons.campaign_outlined, 'Nueva promoción', _irPromo);
+      add(Icons.event_available, 'Horario de citas', _irHorarioCitas);
+      add(Icons.schedule, 'Horario del local', _abrirHorarioGuardado);
+      add(Icons.payments_outlined, 'Formas de cobro', _configurarCobros);
+      add(Icons.visibility_outlined, 'Ver como cliente', _irMenuPublico);
+    } else {
+      add(
+        Icons.receipt_long,
+        'Pedidos',
+        _irPedidos,
+        aviso: aviso.pendientesAhora,
+        urgente: true,
+      );
+      add(
+        Icons.event_available,
+        'Encargos',
+        () => _irPedidos(encargos: true),
+        aviso: aviso.encargosAbiertos,
+        urgente: aviso.encargosUrgentes,
+      );
+      add(Icons.analytics_outlined, 'Historial', _irHistorial);
+      if (CategoriasNegocio.puedeEnvios(cat)) {
+        add(Icons.local_shipping_outlined, 'Envíos y cobros', _irEnvios);
+      }
+      add(Icons.campaign_outlined, 'Nueva promoción', _irPromo);
+      if (CategoriasNegocio.usaIngredientes(cat)) {
+        add(Icons.restaurant_menu, 'Ingredientes', _irIngredientes);
+      }
+      if (_opciones.repisas) {
+        add(Icons.shelves, 'Repisas', _irUbicaciones);
+      }
+      if (_opciones.stock) {
+        add(Icons.inventory_2, 'Entrada de mercancía', _irMercancia);
+      }
+      add(Icons.schedule, 'Horario', _abrirHorarioGuardado);
+      add(Icons.visibility_outlined, 'Ver como cliente', _irMenuPublico);
+    }
+    add(Icons.groups_outlined, 'Equipo', _irEquipo);
+    return acciones;
+  }
+
+  Widget _tituloBloque(String texto) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Text(
+        texto,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.3,
+          color: Colors.grey.shade600,
+        ),
+      ),
+    );
+  }
+
+  Widget _botonPrincipal(MaterialColor tono) {
+    final cat = widget.categoria;
+    final esServicios = CategoriasNegocio.esServicios(cat);
+    return SizedBox(
+      width: double.infinity,
+      child: FilledButton.icon(
+        icon: Icon(CategoriasNegocio.iconoVentaEnLocal(cat), size: 22),
+        label: Text(
+          esServicios ? 'Citas y solicitudes' : CategoriasNegocio.etiquetaVentaEnLocalLargo(cat),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
+        style: FilledButton.styleFrom(
+          backgroundColor: tono.shade700,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        ),
+        onPressed: esServicios ? _irPedidos : _irVentaLocal,
+      ),
+    );
+  }
+
+  Widget _grillaAcciones(MaterialColor tono) {
+    return AvisoPedidosNegocio(
+      negocioId: widget.negocioId,
+      builder: (aviso) {
+        final acciones = _accionesPanel(aviso);
+        return LayoutBuilder(
+      builder: (context, constraints) {
+        final cols = constraints.maxWidth > 720 ? 3 : 2;
+        const gap = 8.0;
+        final ancho = (constraints.maxWidth - gap * (cols - 1)) / cols;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: acciones.map((accion) {
+            return SizedBox(
+              width: ancho,
+              child: Material(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(12),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: accion.onTap,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(accion.icono, size: 22, color: tono.shade700),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            accion.titulo,
+                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13.5, height: 1.2),
+                          ),
+                        ),
+                        EncargoUtils.burbuja(accion.aviso, urgente: accion.urgente),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        );
+      },
+      );
+      },
+    );
+  }
+
   // ==========================================
   // CONSTRUCCIÓN DE LA PANTALLA PRINCIPAL
   // ==========================================
@@ -273,53 +659,48 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     final bool isPausado = ComisionAppUtils.esPausado(widget.estadoActual);
     final bool isActivo = ComisionAppUtils.esActivo(widget.estadoActual);
     final bool puedeOperar = esBodega || isActivo || isPausado;
+    final MaterialColor tono = isPausado && !esBodega
+        ? Colors.deepPurple
+        : CategoriasNegocio.color(widget.categoria);
 
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        title: Text(esBodega ? 'Gestionar Bodega' : 'Gestionar Negocio'),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              esBodega ? 'Gestionar bodega' : 'Gestionar negocio',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            Text(
+              widget.categoria,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
         backgroundColor: globals.colorFondo,
         foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.groups),
-            tooltip: 'Equipo y trabajadores',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => EquipoNegocioScreen(
-                    negocioId: widget.negocioId,
-                    nombreNegocio: widget.nombreActual,
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
       ),
       body: Column(
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(12),
-            color: esBodega
-                ? Colors.brown.shade100
-                : (isPausado ? Colors.deepPurple.shade100 : Colors.green.shade100),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            color: tono.shade100,
             child: Text(
               esBodega
-                  ? '📦 BODEGA INTERNA: No visible al público. Solo inventario y salidas.'
+                  ? 'Bodega interna. No sale en Explorar. Solo inventario y salidas.'
                   : (isPausado
-                      ? '⏸ PAUSADO: Los clientes no ven tu negocio. Regulariza el pago de la app.'
+                      ? 'Pausado. Los clientes no ven el negocio hasta regularizar el pago de la app.'
                       : (isActivo
-                          ? '✅ ACTIVO: Tu negocio es visible para clientes.'
+                          ? 'Activo. ${CategoriasNegocio.resumen(widget.categoria)}'
                           : 'Estado del negocio en actualización.')),
               textAlign: TextAlign.center,
               style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: esBodega
-                    ? Colors.brown.shade900
-                    : (isPausado ? Colors.deepPurple.shade800 : Colors.green.shade800),
+                fontWeight: FontWeight.w600,
+                color: tono.shade900,
+                height: 1.3,
               ),
             ),
           ),
@@ -332,362 +713,18 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                 children: [
                   
                   if (puedeOperar) ...[
-                    if (esBodega) ...[
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          icon: const Icon(Icons.output, size: 20),
-                          label: Text(
-                            CategoriasNegocio.etiquetaVentaEnLocalLargo(widget.categoria),
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.brown.shade700,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
-                          onPressed: () {
-                            context.read<CartProvider>().limpiarCarrito();
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => MenuNegocioScreen(
-                                  negocioId: widget.negocioId,
-                                  nombreNegocio: widget.nombreActual,
-                                  modoTrabajador: true,
-                                  categoriaNegocio: widget.categoria,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              icon: const Icon(Icons.receipt_long, size: 20),
-                              label: const Text('Salidas',
-                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blueAccent,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              ),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => PedidosNegocioScreen(
-                                      negocioId: widget.negocioId,
-                                      nombreNegocio: widget.nombreActual,
-                                      puedeVerHistorial: true,
-                                      categoria: widget.categoria,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ] else if (CategoriasNegocio.esServicios(widget.categoria))
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              icon: const Icon(Icons.event_available, size: 20),
-                              label: const Text('Citas',
-                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.deepPurple,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              ),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => PedidosNegocioScreen(
-                                      negocioId: widget.negocioId,
-                                      nombreNegocio: widget.nombreActual,
-                                      puedeVerHistorial: true,
-                                      categoria: widget.categoria,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              icon: const Icon(Icons.campaign, size: 20),
-                              label: const Text('Promo',
-                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.redAccent,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              ),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => AgregarPromocionScreen(
-                                      negocioId: widget.negocioId,
-                                      nombreNegocio: widget.nombreActual,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      )
-                    else
-                      Column(
-                        children: [
-                          if (CategoriasNegocio.puedeVentaEnLocal(widget.categoria)) ...[
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton.icon(
-                                icon: Icon(
-                                  CategoriasNegocio.esProductos(widget.categoria)
-                                      ? Icons.point_of_sale
-                                      : Icons.add_shopping_cart,
-                                  size: 20,
-                                ),
-                                label: Text(
-                                  CategoriasNegocio.etiquetaVentaEnLocalLargo(widget.categoria),
-                                  style: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.indigo,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                ),
-                                onPressed: () {
-                                  context.read<CartProvider>().limpiarCarrito();
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => MenuNegocioScreen(
-                                        negocioId: widget.negocioId,
-                                        nombreNegocio: widget.nombreActual,
-                                        modoTrabajador: true,
-                                        categoriaNegocio: widget.categoria,
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                          ],
-                          Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              icon: const Icon(Icons.receipt_long, size: 20),
-                              label: const Text('Pedidos',
-                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.blueAccent,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              ),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => PedidosNegocioScreen(
-                                      negocioId: widget.negocioId,
-                                      nombreNegocio: widget.nombreActual,
-                                      puedeVerHistorial: true,
-                                      categoria: widget.categoria,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              icon: const Icon(Icons.local_shipping, size: 20),
-                              label: const Text('Envíos',
-                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.teal,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              ),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) =>
-                                        ConfigurarEnviosScreen(negocioId: widget.negocioId),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              icon: const Icon(Icons.campaign, size: 20),
-                              label: const Text('Promo',
-                                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.redAccent,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              ),
-                              onPressed: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => AgregarPromocionScreen(
-                                      negocioId: widget.negocioId,
-                                      nombreNegocio: widget.nombreActual,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                        ],
-                      ),
-                    const SizedBox(height: 10),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        icon: const Icon(Icons.analytics_outlined),
-                        label: Text(CategoriasNegocio.etiquetaHistorial(widget.categoria), style: const TextStyle(fontWeight: FontWeight.bold)),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.indigo,
-                          side: const BorderSide(color: Colors.indigo),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => HistorialPedidosNegocioScreen(
-                                negocioId: widget.negocioId,
-                                nombreNegocio: widget.nombreActual,
-                                categoria: widget.categoria,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+                    _tituloBloque('Día a día'),
+                    _botonPrincipal(tono),
+                    const SizedBox(height: 6),
+                    Text(
+                      CategoriasNegocio.ayudaVentaEnLocal(widget.categoria),
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade700, height: 1.3),
                     ),
-                    const SizedBox(height: 10),
-
-                    if (NegocioIngredienteService.usaIngredientes(widget.categoria))
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          icon: const Icon(Icons.restaurant_menu),
-                          label: const Text('Mis ingredientes', style: TextStyle(fontWeight: FontWeight.bold)),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.green.shade800,
-                            side: BorderSide(color: Colors.green.shade700),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => IngredientesNegocioScreen(
-                                  negocioId: widget.negocioId,
-                                  nombreNegocio: widget.nombreActual,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    if (CategoriasNegocio.esServicios(widget.categoria))
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          icon: const Icon(Icons.event_available),
-                          label: const Text(
-                            'Horario para citas',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.deepPurple,
-                            side: const BorderSide(color: Colors.deepPurple),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => HorarioCitasNegocioScreen(
-                                  negocioId: widget.negocioId,
-                                  nombreNegocio: widget.nombreActual,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    if (CategoriasNegocio.usaInventario(widget.categoria))
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          icon: const Icon(Icons.shelves),
-                          label: const Text('Ubicaciones / Repisas', style: TextStyle(fontWeight: FontWeight.bold)),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.indigo,
-                            side: const BorderSide(color: Colors.indigo),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => UbicacionesNegocioScreen(
-                                  negocioId: widget.negocioId,
-                                  nombreNegocio: widget.nombreActual,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    const SizedBox(height: 15),
-
-                    if (!esBodega)
-                      StreamBuilder<DocumentSnapshot>(
-                        stream: FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).snapshots(),
-                        builder: (context, snapshot) {
-                          if (!snapshot.hasData || !snapshot.data!.exists) return const SizedBox.shrink();
-                          final data = snapshot.data!.data() as Map<String, dynamic>;
-                          return Card(elevation: 0, color: Colors.blue.shade50, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.blue.shade200)), child: ListTile(leading: const Icon(Icons.calendar_month, color: Colors.blueAccent, size: 30), title: const Text('Horario de Atención', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent)), subtitle: Text('Configura tus días de descanso', style: TextStyle(fontSize: 12, color: Colors.blue.shade800)), trailing: const Icon(Icons.chevron_right, color: Colors.blueAccent), onTap: () => _abrirConfiguracionHorario(data['horario'] as Map<String, dynamic>?)));
-                        },
-                      ),
-                    if (!esBodega) const Divider(height: 30),
+                    const SizedBox(height: 18),
+                    _tituloBloque('Herramientas'),
+                    _grillaAcciones(tono),
+                    const SizedBox(height: 8),
+                    const Divider(height: 28),
                   ],
 
                   // --- DATOS BÁSICOS DEL NEGOCIO (FOTO Y MAPA) ---
@@ -697,10 +734,18 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                       if (!snapshot.hasData || !snapshot.data!.exists) return const Center(child: CircularProgressIndicator());
                       final data = snapshot.data!.data() as Map<String, dynamic>;
                       final logoUrl = data['foto_url'];
-                      if (!_datosCargados) { _ubicacionCtrl.text = data['ubicacion'] ?? ''; _ubicacionGeo = data['ubicacion_geo']; _datosCargados = true; }
+                      if (!_datosCargados) {
+                        _ubicacionCtrl.text = data['ubicacion'] ?? '';
+                        _descCtrl.text = data['descripcion'] ?? '';
+                        _telefonoCtrl.text = data['telefono_contacto'] ?? '';
+                        _ubicacionGeo = data['ubicacion_geo'];
+                        _datosCargados = true;
+                      }
 
                       return Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          _tituloBloque(esBodega ? 'Datos de la bodega' : 'Datos del local'),
                           if (esBodega) ...[
                             TextField(
                               controller: _nombreCtrl,
@@ -711,7 +756,17 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                                 prefixIcon: Icon(Icons.warehouse_outlined),
                               ),
                             ),
-                          ] else
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _descCtrl,
+                              maxLines: 2,
+                              decoration: const InputDecoration(
+                                labelText: 'Nota interna (opcional)',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
+                          ] else ...[
                             Row(
                             children: [
                               GestureDetector(
@@ -797,6 +852,30 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                               ),
                             ],
                           ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _descCtrl,
+                              maxLines: 2,
+                              decoration: const InputDecoration(
+                                labelText: 'Descripción para clientes',
+                                hintText: 'Qué ofreces, en una o dos líneas',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            TextField(
+                              controller: _telefonoCtrl,
+                              keyboardType: TextInputType.phone,
+                              decoration: const InputDecoration(
+                                labelText: 'Teléfono o WhatsApp',
+                                hintText: 'Lo ven al abrir tu local: llamada y WhatsApp',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                                prefixIcon: Icon(Icons.phone_outlined, size: 18),
+                              ),
+                            ),
+                          ],
                           if (!esBodega && _ubicacionGeo != null) const Padding(padding: EdgeInsets.only(top: 8), child: Align(alignment: Alignment.centerRight, child: Text('✓ Coordenadas fijadas en el mapa', style: TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.bold)))),
                           const SizedBox(height: 15),
                           SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: _isLoading ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save), label: const Text('Guardar Datos'), style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white), onPressed: _guardarDatos))
@@ -874,39 +953,13 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                     children: [
                       Expanded(
                         child: Text(
-                          CategoriasNegocio.esServicios(widget.categoria)
-                              ? 'Mis servicios'
-                              : (esBodega ? 'Inventario' : 'Catálogo / Productos'),
+                          CategoriasNegocio.etiquetaCatalogo(widget.categoria),
                           style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                         ),
                       ),
-                      if (CategoriasNegocio.usaInventario(widget.categoria)) ...[
-                        OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.teal.shade800,
-                            side: BorderSide(color: Colors.teal.shade400),
-                          ),
-                          icon: const Icon(Icons.inventory_2, size: 18),
-                          label: const Text('Mercancía'),
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) => AgregarMercanciaScreen(
-                                  negocioId: widget.negocioId,
-                                  nombreNegocio: widget.nombreActual,
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                        const SizedBox(width: 8),
-                      ],
                       ElevatedButton.icon(
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: CategoriasNegocio.esServicios(widget.categoria)
-                              ? Colors.deepPurple
-                              : Colors.blueAccent,
+                          backgroundColor: tono.shade700,
                           foregroundColor: Colors.white,
                         ),
                         icon: const Icon(Icons.add, size: 18),
@@ -941,9 +994,7 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                     controller: _busquedaCatalogoCtrl,
                     textInputAction: TextInputAction.search,
                     decoration: InputDecoration(
-                      hintText: CategoriasNegocio.esServicios(widget.categoria)
-                          ? 'Buscar servicio...'
-                          : 'Buscar nombre, ingrediente, 600 ml, código...',
+                      hintText: CategoriasNegocio.hintBusqueda(widget.categoria),
                       prefixIcon: const Icon(Icons.search),
                       suffixIcon: _busquedaCatalogo.isNotEmpty
                           ? IconButton(
@@ -1064,11 +1115,19 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                                 final textoIngredientes = NegocioIngredienteService.textoIngredientes(prod);
                                 if (textoIngredientes != null) extraWidgets.add(_infoChip('Ingredientes: $textoIngredientes'));
                                 if (prod['peso_o_contenido'] != null && prod['peso_o_contenido'].toString().isNotEmpty) extraWidgets.add(_infoChip('Cont: ${prod['peso_o_contenido']}'));
+                                if (prod['requiere_receta'] == true) extraWidgets.add(_infoChip('Requiere receta'));
+                                final vence = ProductoPedidoUtils.textoVencimiento(prod['fecha_vencimiento']);
+                                if (vence != null) extraWidgets.add(_infoChip(vence));
+                                final material = prod['material']?.toString() ?? '';
+                                if (material.isNotEmpty) extraWidgets.add(_infoChip('Material: $material'));
+                                if (prod['cotizar_whatsapp'] == true) extraWidgets.add(_infoChip('Cotizar por WhatsApp'));
                                 }
-                                if (CategoriasNegocio.usaInventario(widget.categoria)) {
+                                if (_opciones.stock && prod['controla_inventario'] == true) {
                                   extraWidgets.add(_infoChip('Stock: ${NegocioUbicacionService.stockTotal(prod)} pza(s)'));
-                                  final ubic = NegocioUbicacionService.textoUbicaciones(prod);
-                                  if (ubic != null) extraWidgets.add(_infoChip('Ubicación: $ubic'));
+                                  if (_opciones.repisas) {
+                                    final ubic = NegocioUbicacionService.textoUbicaciones(prod);
+                                    if (ubic != null) extraWidgets.add(_infoChip('Ubicación: $ubic'));
+                                  }
                                 }
 
                                 return SizedBox(
@@ -1218,4 +1277,20 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
       ),
     );
   }
+}
+
+class _AccionPanel {
+  final IconData icono;
+  final String titulo;
+  final VoidCallback onTap;
+  final int aviso;
+  final bool urgente;
+
+  const _AccionPanel({
+    required this.icono,
+    required this.titulo,
+    required this.onTap,
+    this.aviso = 0,
+    this.urgente = false,
+  });
 }

@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:angostura_digital/utils/categorias_negocio.dart';
 
 /// Un ingrediente del catálogo de un negocio (ej. "Lechuga", "Carne", "Queso").
 class NegocioIngrediente {
@@ -30,14 +31,8 @@ class NegocioIngrediente {
 class NegocioIngredienteService {
   static final _db = FirebaseFirestore.instance;
 
-  /// Categorías de negocio que usan ingredientes (comida, antojos, etc.).
-  static const Set<String> categoriasConIngredientes = {
-    'Restaurante / Comida',
-    'Postres y Antojos',
-  };
-
   static bool usaIngredientes(String? categoria) =>
-      categoria != null && categoriasConIngredientes.contains(categoria);
+      CategoriasNegocio.usaIngredientes(categoria);
 
   static CollectionReference<Map<String, dynamic>> _ref(String negocioId) =>
       _db.collection('negocios').doc(negocioId).collection('ingredientes');

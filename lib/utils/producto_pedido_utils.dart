@@ -2,7 +2,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
 import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
-import 'package:angostura_digital/utils/categorias_negocio.dart';
 
 /// Detalles de productos y promociones en carrito y pedidos.
 class ProductoPedidoUtils {
@@ -19,7 +18,25 @@ class ProductoPedidoUtils {
     put('tallas', data['tallas_disponibles']);
     put('colores', data['colores']);
     put('descripcion', data['descripcion']);
+    if (data['requiere_receta'] == true) {
+      detalles['receta'] = 'Sí, debe presentarla';
+    }
+    put('vencimiento', data['fecha_vencimiento']);
     return detalles;
+  }
+
+  /// Texto corto para fichas. Null si el producto no tiene fecha.
+  static String? textoVencimiento(dynamic raw) {
+    final s = raw?.toString().trim() ?? '';
+    if (s.isEmpty) return null;
+    final d = DateTime.tryParse(s);
+    if (d == null) return 'Vence: $s';
+    final dia = DateTime(d.year, d.month, d.day);
+    final hoy = DateTime.now();
+    final hoyDia = DateTime(hoy.year, hoy.month, hoy.day);
+    final fecha = '${d.day}/${d.month}/${d.year}';
+    if (dia.isBefore(hoyDia)) return 'Vencido $fecha';
+    return 'Vence $fecha';
   }
 
   static Map<String, String> detallesDesdePromocion(Map<String, dynamic> data) {
@@ -451,12 +468,15 @@ class ProductoPedidoUtils {
       final ts = data['tipo_servicio']?.toString() ?? 'cita';
       detalles['tipo_servicio'] =
           ts == 'cita' ? 'Con cita previa' : 'Solicitud a domicilio';
-    } else if (CategoriasNegocio.usaInventario(categoriaNegocio)) {
+    } else if (data['controla_inventario'] == true) {
       final stock = NegocioUbicacionService.stockTotal(data);
       detalles['stock'] = '$stock pieza(s)';
       final ubic = NegocioUbicacionService.textoUbicaciones(data);
-      if (ubic != null) detalles['ubicacion'] = ubic;
+      if (ubic != null && !RegExp(r'^General \(\d+\)$').hasMatch(ubic)) {
+        detalles['ubicacion'] = ubic;
+      }
     }
+    putExtra('material', data['material']);
 
     final filas = detalles.entries
         .where((e) => e.key != 'tipo')
@@ -548,6 +568,12 @@ class ProductoPedidoUtils {
         return 'Ubicación en tienda';
       case 'stock':
         return 'Stock';
+      case 'receta':
+        return 'Receta';
+      case 'vencimiento':
+        return 'Vencimiento';
+      case 'material':
+        return 'Material';
       case 'tipo_servicio':
         return 'Tipo de servicio';
       case 'negocio':

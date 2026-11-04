@@ -106,11 +106,14 @@ class _ExplorarTabState extends State<ExplorarTab> {
           scrollDirection: Axis.horizontal,
           child: Row(
             children: [
-              _chipCategoria(CategoriasNegocio.restaurante, Icons.restaurant, Colors.orange),
-              const SizedBox(width: 8),
-              _chipCategoria(CategoriasNegocio.productos, Icons.store, Colors.green),
-              const SizedBox(width: 8),
-              _chipCategoria(CategoriasNegocio.servicios, Icons.content_cut, Colors.deepPurple),
+              for (var i = 0; i < CategoriasNegocio.listaPublica.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                _chipCategoria(
+                  CategoriasNegocio.listaPublica[i],
+                  CategoriasNegocio.icono(CategoriasNegocio.listaPublica[i]),
+                  CategoriasNegocio.color(CategoriasNegocio.listaPublica[i]),
+                ),
+              ],
             ],
           ),
         ),
@@ -177,6 +180,7 @@ class _ExplorarTabState extends State<ExplorarTab> {
     String? estadoCierre = _verificarHorario(data['horario'] as Map<String, dynamic>?);
     bool isAbierto = estadoCierre == null;
     String ubicacion = data['ubicacion'] ?? '';
+    final tieneWhatsapp = (data['telefono_contacto'] ?? '').toString().trim().isNotEmpty;
     final textoUltimoTiempo = textoUltimoTiempoNegocio(data, etiqueta: 'Último tiempo');
 
     return GestureDetector(
@@ -215,6 +219,15 @@ class _ExplorarTabState extends State<ExplorarTab> {
                               Icon(Icons.location_on, size: 14, color: Colors.red.shade400),
                               const SizedBox(width: 2),
                               Text(ubicacion, style: TextStyle(color: Colors.grey.shade800, fontSize: 12, fontWeight: FontWeight.w600)),
+                            ],
+                          ),
+                        if (tieneWhatsapp)
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.chat, size: 14, color: Colors.green.shade700),
+                              const SizedBox(width: 2),
+                              Text('WhatsApp', style: TextStyle(color: Colors.green.shade800, fontSize: 12, fontWeight: FontWeight.w600)),
                             ],
                           ),
                         if (!isAbierto) 

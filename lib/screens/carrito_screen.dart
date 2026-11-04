@@ -10,6 +10,7 @@ import 'package:angostura_digital/utils/entrega_ubicacion_tracker.dart';
 import 'package:angostura_digital/utils/envio_distancia_utils.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/encargo_utils.dart';
 import 'package:angostura_digital/utils/servicio_cita_utils.dart';
 import 'package:angostura_digital/services/notificaciones_pedido_service.dart';
 import 'package:angostura_digital/utils/telefono_obligatorio_utils.dart';
@@ -85,6 +86,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
   final TextEditingController _clienteNombreCtrl = TextEditingController();
   final TextEditingController _clienteTelefonoCtrl = TextEditingController();
   final TextEditingController _notasMostradorCtrl = TextEditingController();
+  final TextEditingController _detalleEncargoCtrl = TextEditingController();
+  bool _esEncargo = false;
+  DateTime? _fechaEncargo;
   String? _errorTelefonoMostrador;
 
   bool _enviandoPedido = false;
@@ -120,6 +124,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
     _clienteNombreCtrl.dispose();
     _clienteTelefonoCtrl.dispose();
     _notasMostradorCtrl.dispose();
+    _detalleEncargoCtrl.dispose();
     super.dispose();
   }
 
@@ -404,7 +409,8 @@ class _CarritoScreenState extends State<CarritoScreen> {
       'comision_pagada_por': config.pagadaPor,
       'total': cart.total,
       'estado': 'Pendiente',
-      'notas': '',
+      'notas': _esEncargo ? _detalleEncargoCtrl.text.trim() : '',
+      ..._datosEncargo(),
       'metodo_pago': _metodoPagoSeleccionado ?? 'efectivo',
       if (_metodoPagoSeleccionado == 'efectivo' &&
           (double.tryParse(_pagaConCtrl.text.trim()) ?? 0) > 0) ...{
@@ -495,6 +501,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
       'total': cart.total,
       'estado': 'Pendiente',
       'notas': notas,
+      ..._datosEncargo(),
       'metodo_pago': _metodoPagoSeleccionado ?? 'efectivo',
       if (_metodoPagoSeleccionado == 'efectivo' &&
           (double.tryParse(_pagaConCtrl.text.trim()) ?? 0) > 0) ...{
@@ -693,8 +700,11 @@ class _CarritoScreenState extends State<CarritoScreen> {
 
       if (!mounted) return;
       if (_esMostrador) {
-        Navigator.of(context).pop();
-        if (mounted) Navigator.of(context).pop();
+        final nav = Navigator.of(context);
+        nav.pop();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          nav.pop();
+        });
       } else {
         Navigator.of(context).popUntil((route) => route.isFirst);
       }
@@ -762,7 +772,8 @@ class _CarritoScreenState extends State<CarritoScreen> {
     }
     if (_esMostrador) {
       return _pagoValido(cart) &&
-          TelefonoLocalUtils.esValidoOpcional(_clienteTelefonoCtrl.text);
+          TelefonoLocalUtils.esValidoOpcional(_clienteTelefonoCtrl.text) &&
+          _encargoListo;
     }
     if (cart.tieneServicioSolicitud) {
       if (_coordenadasEntrega == null || !_ubicacionListaConfirmada) return false;
@@ -771,7 +782,49 @@ class _CarritoScreenState extends State<CarritoScreen> {
       if (_fueraDeRango) return false;
       if (!_envioPorDistancia) return false;
     }
-    return _pagoValido(cart);
+    return _pagoValido(cart) && _encargoListo;
+  }
+
+  bool get _puedeSerEncargo => !_esBodegaSalida;
+
+  bool get _encargoListo {
+    if (!_puedeSerEncargo || !_esEncargo) return true;
+    final fecha = _fechaEncargo;
+    if (fecha == null) return false;
+    return fecha.isAfter(DateTime.now());
+  }
+
+  Map<String, dynamic> _datosEncargo() {
+    if (!_puedeSerEncargo || !_esEncargo || _fechaEncargo == null) return {};
+    final detalle = _detalleEncargoCtrl.text.trim();
+    return {
+      'es_encargo': true,
+      'fecha_encargo': Timestamp.fromDate(_fechaEncargo!),
+      if (detalle.isNotEmpty) 'detalle_encargo': detalle,
+    };
+  }
+
+  Future<void> _elegirFechaEncargo() async {
+    final ahora = DateTime.now();
+    final base = _fechaEncargo ?? ahora.add(const Duration(hours: 2));
+    final dia = await showDatePicker(
+      context: context,
+      initialDate: base,
+      firstDate: DateTime(ahora.year, ahora.month, ahora.day),
+      lastDate: ahora.add(const Duration(days: 180)),
+      helpText: '¿Para qué día es el encargo?',
+    );
+    if (dia == null || !mounted) return;
+    final horaInicial = TimeOfDay.fromDateTime(base);
+    final hora = await showTimePicker(
+      context: context,
+      initialTime: horaInicial,
+      helpText: '¿A qué hora lo necesita?',
+    );
+    if (hora == null || !mounted) return;
+    setState(() {
+      _fechaEncargo = DateTime(dia.year, dia.month, dia.day, hora.hour, hora.minute);
+    });
   }
 
   String _obtenerTextoBoton(CartProvider cart) {
@@ -786,6 +839,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
       if (!TelefonoLocalUtils.esValidoOpcional(_clienteTelefonoCtrl.text)) {
         return 'Teléfono: 10 dígitos';
       }
+      if (!_encargoListo) return _textoFaltaEncargo();
       if (_metodoPagoSeleccionado == null) return 'Elige cómo va a pagar';
       if (!_pagoValido(cart)) return 'Monto en efectivo insuficiente';
       return 'Registrar pedido';
@@ -801,10 +855,87 @@ class _CarritoScreenState extends State<CarritoScreen> {
       if (!_envioPorDistancia) return 'Sin envío a domicilio';
       if (_envioGratis) return 'Marca tu ubicación (envío gratis)';
     }
+    if (!_encargoListo) return _textoFaltaEncargo();
     if (_metodoPagoSeleccionado == null) return 'Elige cómo vas a pagar';
     if (!_pagoValido(cart)) return 'Monto en efectivo insuficiente';
     if (!_telefonoVerificado) return 'Confirma tu teléfono';
     return 'Confirmar pedido';
+  }
+
+  String _textoFaltaEncargo() {
+    final fecha = _fechaEncargo;
+    if (fecha != null && !fecha.isAfter(DateTime.now())) {
+      return 'La hora del encargo ya pasó';
+    }
+    return 'Elige fecha y hora del encargo';
+  }
+
+  Widget _seccionEncargo() {
+    if (!_puedeSerEncargo) return const SizedBox.shrink();
+    final fecha = _fechaEncargo;
+    final pasada = fecha != null && !fecha.isAfter(DateTime.now());
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 12, bottom: 4),
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+      decoration: BoxDecoration(
+        color: Colors.deepOrange.shade50,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.deepOrange.shade100),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Es un encargo'),
+            subtitle: const Text('Para otra fecha: un pastel el 15, sushis el viernes, un producto para mañana.'),
+            value: _esEncargo,
+            activeThumbColor: Colors.deepOrange.shade700,
+            onChanged: (v) => setState(() => _esEncargo = v),
+          ),
+          if (_esEncargo) ...[
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.deepOrange.shade900,
+                  side: BorderSide(color: Colors.deepOrange.shade300),
+                ),
+                onPressed: _elegirFechaEncargo,
+                icon: const Icon(Icons.event),
+                label: Text(
+                  fecha == null ? 'Elegir día y hora' : EncargoUtils.texto(fecha),
+                ),
+              ),
+            ),
+            if (pasada)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Esa hora ya pasó. Elige una más adelante.',
+                  style: TextStyle(color: Colors.red.shade700, fontSize: 12),
+                ),
+              ),
+            if (!_esMostrador) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: _detalleEncargoCtrl,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  labelText: 'Detalle (opcional)',
+                  hintText: 'Ej. pastel de tres leches, sin nuez',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                  filled: true,
+                  fillColor: Colors.white,
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
   }
 
   Widget _indicadorPasosCarrito() {
@@ -1149,6 +1280,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
                             const SizedBox(height: 8),
                           ],
                           if (_esMostrador) _buildMostradorClienteSection(),
+                          if (_esMostrador) _seccionEncargo(),
                           if (!_esMostrador && !_telefonoVerificado)
                             Container(
                               width: double.infinity,
@@ -1230,6 +1362,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                 ],
                               ],
                             ),
+                            _seccionEncargo(),
                           ],
                           if (!_esMostrador && necesitaUbicacion) ...[
                             const Text(

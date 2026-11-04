@@ -101,6 +101,9 @@ class CartProvider with ChangeNotifier {
   final Map<String, CartItem> _items = {};
   int _secuenciaLinea = 0;
 
+  /// Pedido armado en el local (mostrador o bodega). No es la compra de la cuenta.
+  bool _esPedidoLocal = false;
+
   String _generarLineaId(String prodId) => '${prodId}__${_secuenciaLinea++}';
   
   // --- VARIABLES DINÁMICAS DE ENVÍO ---
@@ -112,6 +115,10 @@ class CartProvider with ChangeNotifier {
 
   String? get negocioIdActual => _negocioIdActual;
   Map<String, CartItem> get items => _items;
+  bool get esPedidoLocal => _esPedidoLocal;
+
+  /// Compra del cliente. El pedido del local no cuenta.
+  bool get tieneCompraPersonal => _items.isNotEmpty && !_esPedidoLocal;
   double get costoEnvio => _costoEnvio;
   double get comisionApp => _comisionApp;
   String get comisionPagadaPor => _comisionPagadaPor;
@@ -299,6 +306,26 @@ class CartProvider with ChangeNotifier {
     _costoEnvio = 0.0;
     _comisionApp = 0.0;
     _comisionPagadaPor = 'negocio';
+    _esPedidoLocal = false;
+    notifyListeners();
+  }
+
+  /// Empieza un pedido de mostrador o una salida de bodega, aparte del carrito personal.
+  void iniciarPedidoLocal() {
+    limpiarCarrito();
+    _esPedidoLocal = true;
+    notifyListeners();
+  }
+
+  /// Tira el pedido del local. La compra personal no se toca.
+  void cerrarPedidoLocal() {
+    if (!_esPedidoLocal) return;
+    _items.clear();
+    _negocioIdActual = null;
+    _costoEnvio = 0.0;
+    _comisionApp = 0.0;
+    _comisionPagadaPor = 'negocio';
+    _esPedidoLocal = false;
     notifyListeners();
   }
 

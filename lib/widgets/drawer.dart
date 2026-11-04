@@ -14,6 +14,8 @@ import 'package:angostura_digital/services/negocio_equipo_service.dart';
 import 'package:angostura_digital/utils/negocio_equipo_utils.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/encargo_utils.dart';
+import 'package:angostura_digital/widgets/aviso_pedidos_negocio.dart';
 import 'package:angostura_digital/providers/cart_provider.dart';
 import 'package:angostura_digital/widgets/auth_gate.dart';
 import 'package:angostura_digital/navigation/app_navigator.dart';
@@ -368,7 +370,6 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
                               final estadoVisual = ComisionAppUtils.estadoVisual(acceso.estado);
                               final esTrabajador = NegocioEquipoUtils.esTrabajador(acceso.rol);
                               final esEncargado = NegocioEquipoUtils.esEncargado(acceso.rol);
-                              final esBodega = CategoriasNegocio.esBodega(acceso.categoria);
                               final esServicios =
                                   CategoriasNegocio.esServicios(acceso.categoria);
                               return ListTile(
@@ -377,14 +378,14 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
                                       ? (esServicios
                                           ? Icons.event_available
                                           : Icons.receipt_long)
-                                      : (esBodega
-                                          ? Icons.warehouse
-                                          : (esEncargado ? Icons.supervisor_account : Icons.storefront)),
+                                      : (esEncargado
+                                          ? Icons.supervisor_account
+                                          : CategoriasNegocio.icono(acceso.categoria)),
                                   color: esTrabajador
                                       ? Colors.blueAccent
-                                      : (esBodega
-                                          ? Colors.brown
-                                          : (esEncargado ? Colors.deepPurple : Colors.orange)),
+                                      : (esEncargado
+                                          ? Colors.deepPurple
+                                          : CategoriasNegocio.color(acceso.categoria)),
                                 ),
                                 title: Text(acceso.nombre),
                                 subtitle: Text(
@@ -397,10 +398,33 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
                                     fontSize: 11,
                                   ),
                                 ),
-                                trailing: Icon(
-                                  acceso.panelCompleto ? Icons.settings : Icons.arrow_forward_ios,
-                                  color: Colors.blueGrey,
-                                  size: acceso.panelCompleto ? 24 : 16,
+                                trailing: AvisoPedidosNegocio(
+                                  negocioId: acceso.negocioId,
+                                  builder: (aviso) {
+                                    final muestraEncargos = !CategoriasNegocio.esBodega(acceso.categoria) &&
+                                        !CategoriasNegocio.esServicios(acceso.categoria);
+                                    return Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        if (aviso.pendientesAhora > 0) ...[
+                                          EncargoUtils.burbuja(aviso.pendientesAhora, urgente: true),
+                                          const SizedBox(width: 4),
+                                        ],
+                                        if (muestraEncargos && aviso.encargosAbiertos > 0) ...[
+                                          EncargoUtils.burbuja(
+                                            aviso.encargosAbiertos,
+                                            urgente: aviso.encargosUrgentes,
+                                          ),
+                                          const SizedBox(width: 4),
+                                        ],
+                                        Icon(
+                                          acceso.panelCompleto ? Icons.settings : Icons.arrow_forward_ios,
+                                          color: Colors.blueGrey,
+                                          size: acceso.panelCompleto ? 24 : 16,
+                                        ),
+                                      ],
+                                    );
+                                  },
                                 ),
                                 onTap: () {
                                   Navigator.pop(context);
