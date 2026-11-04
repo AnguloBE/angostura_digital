@@ -1473,9 +1473,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
                             });
                             final cajaIngredientes = _seccionIngredientesItem(cart, item);
                             return Card(
-                              key: ValueKey(
-                                '${item.lineaId}|${item.cantidad}|${item.ingredientesQuitados.join('|')}|${item.extras.map((e) => e.nombre).join('|')}',
-                              ),
+                              key: ValueKey(item.lineaId),
                               margin: const EdgeInsets.only(bottom: 10),
                               child: Padding(
                                 padding: const EdgeInsets.all(10),

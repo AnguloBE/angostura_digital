@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 /// Imagen siempre en contenedor cuadrado (1:1), con [BoxFit.cover].
@@ -67,6 +68,24 @@ class SquareImage extends StatelessWidget {
 
     final url = imageUrl!;
 
+    // En el navegador del teléfono, achicar la foto en memoria (memCacheWidth)
+    // la deja en blanco cuando la pantalla se reconstruye, por ejemplo al
+    // agregar al carrito. El navegador ya escala la imagen.
+    if (kIsWeb) {
+      return Image.network(
+        url,
+        key: ValueKey(url),
+        fit: BoxFit.cover,
+        width: double.infinity,
+        height: double.infinity,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.medium,
+        color: color,
+        colorBlendMode: colorBlendMode,
+        errorBuilder: (_, __, ___) => _buildPlaceholder(),
+      );
+    }
+
     if (useCachedNetwork) {
       return LayoutBuilder(
         builder: (context, constraints) {
@@ -75,7 +94,7 @@ class SquareImage extends StatelessWidget {
               (constraints.maxWidth.isFinite && constraints.maxWidth > 0
                   ? constraints.maxWidth
                   : 240);
-          final memCacheWidth = (logical * dpr).round().clamp(64, 960);
+          final memCacheWidth = (logical * dpr).round().clamp(64, 480);
           return CachedNetworkImage(
             imageUrl: url,
             fit: BoxFit.cover,
@@ -99,6 +118,7 @@ class SquareImage extends StatelessWidget {
       fit: BoxFit.cover,
       width: double.infinity,
       height: double.infinity,
+      gaplessPlayback: true,
       color: color,
       colorBlendMode: colorBlendMode,
       errorBuilder: (_, __, ___) => _buildPlaceholder(),

@@ -36,24 +36,12 @@ class _MainNavigationState extends State<MainNavigation> {
 
   @override
   Widget build(BuildContext context) {
-    // Escuchamos el carrito para saber si hay productos
-    final cart = context.watch<CartProvider>();
-
     return Scaffold(
       body: _pantallas[_currentIndex],
-      
-      // EL CARRITO FLOTANTE
-      floatingActionButton: cart.tieneCompraPersonal
-          ? FloatingActionButton.extended(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-              icon: const Icon(Icons.shopping_cart),
-              label: Text('Ver Carrito ( \$${cart.total.toStringAsFixed(2)} )'),
-              onPressed: () {
-                Navigator.push(context, MaterialPageRoute(builder: (_) => const CarritoScreen()));
-              },
-            )
-          : null,
+
+      // El botón escucha el carrito por su cuenta. Si el menú entero
+      // lo escuchara, al agregar un producto se redibujarían las fotos.
+      floatingActionButton: const _BotonCarritoFlotante(),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerFloat,
 
       bottomNavigationBar: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -97,6 +85,28 @@ class _MainNavigationState extends State<MainNavigation> {
           );
         },
       ),
+    );
+  }
+}
+
+class _BotonCarritoFlotante extends StatelessWidget {
+  const _BotonCarritoFlotante();
+
+  @override
+  Widget build(BuildContext context) {
+    final cart = context.watch<CartProvider>();
+    if (!cart.tieneCompraPersonal) return const SizedBox.shrink();
+    return FloatingActionButton.extended(
+      backgroundColor: Colors.green,
+      foregroundColor: Colors.white,
+      icon: const Icon(Icons.shopping_cart),
+      label: Text('Ver Carrito ( \$${cart.total.toStringAsFixed(2)} )'),
+      onPressed: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const CarritoScreen()),
+        );
+      },
     );
   }
 }

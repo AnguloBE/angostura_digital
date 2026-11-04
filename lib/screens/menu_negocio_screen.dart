@@ -183,12 +183,14 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final cartPedido = context.watch<CartProvider>();
+    // Solo nos importa si hay un pedido de local a medio armar.
+    // Escuchar todo el carrito reconstruía el menú y, en el teléfono,
+    // las fotos se quedaban en blanco al agregar un producto.
+    final pedidoLocalAbierto = context.select<CartProvider, bool>(
+      (c) => c.esPedidoLocal && c.items.isNotEmpty,
+    );
     return PopScope(
-      canPop: !widget.modoTrabajador ||
-          _salidaConfirmada ||
-          !cartPedido.esPedidoLocal ||
-          cartPedido.items.isEmpty,
+      canPop: !widget.modoTrabajador || _salidaConfirmada || !pedidoLocalAbierto,
       onPopInvokedWithResult: (didPop, _) async {
         if (!widget.modoTrabajador) return;
         final cart = context.read<CartProvider>();
@@ -947,6 +949,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
           SnackBar(
             content: Text('Solo hay $stock disponible(s) de ${data['nombre']}.'),
             backgroundColor: Colors.orange,
+            behavior: SnackBarBehavior.floating,
           ),
         );
         return;
@@ -968,6 +971,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                 style: const TextStyle(fontWeight: FontWeight.bold)),
             duration: const Duration(milliseconds: 800),
             backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       } else {
@@ -998,6 +1002,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
             style: TextStyle(fontWeight: FontWeight.bold),
           ),
           backgroundColor: Colors.green,
+          behavior: SnackBarBehavior.floating,
           duration: Duration(seconds: 4),
         ),
       );
@@ -1019,6 +1024,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
             backgroundColor: Colors.green,
+            behavior: SnackBarBehavior.floating,
           ),
         );
       } else {
