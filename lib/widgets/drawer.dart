@@ -20,6 +20,10 @@ import 'package:angostura_digital/providers/cart_provider.dart';
 import 'package:angostura_digital/widgets/auth_gate.dart';
 import 'package:angostura_digital/navigation/app_navigator.dart';
 import 'package:angostura_digital/widgets/editar_telefono_dialog.dart';
+import 'package:angostura_digital/widgets/editar_nombre_dialog.dart';
+import 'package:angostura_digital/screens/admin_anuncios_screen.dart';
+import 'package:angostura_digital/screens/admin_solicitudes_negocio_screen.dart';
+import 'package:angostura_digital/screens/solicitud_negocio_screen.dart';
 
 class DrawerPrincipal extends StatefulWidget {
   const DrawerPrincipal({super.key});
@@ -32,51 +36,47 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
   bool _isCerrandoSesion = false;
 
   Future<void> _editarNombre(String nombreActual) async {
-    final nombreCtrl = TextEditingController(text: nombreActual);
+    final ok = await EditarNombreDialog.mostrar(context, nombreActual: nombreActual);
+    if (!ok || !mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Nombre actualizado'), backgroundColor: Colors.green),
+    );
+  }
 
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Editar nombre', style: TextStyle(fontWeight: FontWeight.bold)),
-        content: TextField(
-          controller: nombreCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Tu nombre',
-            prefixIcon: Icon(Icons.person),
-            border: OutlineInputBorder(),
-          ),
-          textCapitalization: TextCapitalization.words,
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blueAccent,
-              foregroundColor: Colors.white,
-            ),
-            onPressed: () async {
-              final error = await AuthService().actualizarNombre(nombreCtrl.text);
-              if (!ctx.mounted) return;
-              Navigator.pop(ctx);
-              if (!mounted) return;
-              if (error == null) {
-                setState(() {});
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Nombre actualizado'),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(error), backgroundColor: Colors.red),
-                );
-              }
-            },
-            child: const Text('Guardar'),
-          ),
-        ],
+  void _abrirQuieroNegocio() {
+    Navigator.pop(context);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _quieroPonerNegocio();
+    });
+  }
+
+  Future<void> _quieroPonerNegocio() async {
+    var user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.isAnonymous) {
+      // Al entrar cambia la cuenta y se reconstruye la app. El diálogo y la
+      // pantalla siguiente van en el navegador de arriba, que no se destruye.
+      final navContext = appNavigatorKey.currentContext;
+      if (navContext == null) return;
+      final ok = await EditarTelefonoDialog.mostrar(navContext, ingresar: true);
+      if (!ok) return;
+      user = FirebaseAuth.instance.currentUser;
+      if (user == null || user.isAnonymous) return;
+    }
+    appNavigatorKey.currentState?.push(
+      MaterialPageRoute(builder: (_) => const SolicitudNegocioScreen()),
+    );
+  }
+
+  Widget _tileQuieroNegocio() {
+    return ListTile(
+      leading: const Icon(Icons.add_business, color: Colors.teal),
+      title: const Text(
+        'Quiero poner mi negocio aquí',
+        style: TextStyle(fontWeight: FontWeight.bold),
       ),
+      subtitle: const Text('Nombre y qué es. Lo revisamos con tu número.'),
+      onTap: _abrirQuieroNegocio,
     );
   }
 
@@ -87,7 +87,8 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
 
   Widget _drawerInvitado() {
     return Drawer(
-      child: Column(
+      child: ListView(
+        padding: EdgeInsets.zero,
         children: [
           Container(
             width: double.infinity,
@@ -126,6 +127,7 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
               });
             },
           ),
+          _tileQuieroNegocio(),
         ],
       ),
     );
@@ -266,6 +268,25 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
           onTap: () {
             Navigator.pop(context);
             Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminHistorialVentasScreen()));
+          },
+        ),
+        ListTile(
+          leading: const Icon(Icons.campaign, color: Colors.redAccent),
+          title: const Text('Anuncios'),
+          subtitle: const Text('Avisos en Inicio, destacados y días', style: TextStyle(fontSize: 12)),
+          onTap: () {
+            Navigator.pop(context);
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminAnunciosScreen()));
+          },
+        ),
+        ListTile(
+          leading: const Icon(Icons.storefront, color: Colors.orange),
+          title: const Text('Solicitudes de negocios'),
+          subtitle: const Text('Quien quiere aparecer en la app', style: TextStyle(fontSize: 12)),
+          trailing: const _BadgeSolicitudes(),
+          onTap: () {
+            Navigator.pop(context);
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const AdminSolicitudesNegocioScreen()));
           },
         ),
       ],
@@ -466,6 +487,7 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
               ),
 
               const Divider(height: 1),
+              _tileQuieroNegocio(),
               ListTile(
                 leading: _isCerrandoSesion
                     ? const SizedBox(
@@ -508,6 +530,45 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
         title,
         style: const TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1.2),
       ),
+    );
+  }
+}
+
+class _BadgeSolicitudes extends StatefulWidget {
+  const _BadgeSolicitudes();
+
+  @override
+  State<_BadgeSolicitudes> createState() => _BadgeSolicitudesState();
+}
+
+class _BadgeSolicitudesState extends State<_BadgeSolicitudes> {
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> _stream;
+
+  @override
+  void initState() {
+    super.initState();
+    _stream = FirebaseFirestore.instance
+        .collection('solicitudes_negocio')
+        .where('estado', isEqualTo: 'pendiente')
+        .snapshots();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _stream,
+      builder: (context, snap) {
+        final n = snap.data?.docs.length ?? 0;
+        if (n <= 0) return const Icon(Icons.chevron_right, color: Colors.blueGrey);
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(color: Colors.orange, borderRadius: BorderRadius.circular(12)),
+          child: Text(
+            n > 99 ? '99+' : '$n',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+          ),
+        );
+      },
     );
   }
 }

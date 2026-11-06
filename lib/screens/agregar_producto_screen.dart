@@ -12,6 +12,7 @@ import 'package:angostura_digital/screens/ubicaciones_negocio_screen.dart';
 import 'package:angostura_digital/screens/escaner_codigo_screen.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/utils/opciones_negocio.dart';
+import 'package:angostura_digital/utils/precio_producto_utils.dart';
 import 'package:angostura_digital/utils/seccion_producto_utils.dart';
 import 'package:angostura_digital/widgets/agregar_stock_producto_dialog.dart';
 import 'package:angostura_digital/widgets/selector_seccion.dart';
@@ -41,6 +42,8 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
 
   late TextEditingController _nombreCtrl;
   late TextEditingController _precioCtrl;
+  late TextEditingController _costoCtrl;
+  late TextEditingController _descuentoCtrl;
   late TextEditingController _descCtrl;
   late TextEditingController _ingredientesCtrl; 
   late TextEditingController _codigoBarrasCtrl; 
@@ -93,6 +96,10 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     // Si mandaron datos, llenamos los campos para editar
     _nombreCtrl = TextEditingController(text: widget.productoData?['nombre'] ?? '');
     _precioCtrl = TextEditingController(text: widget.productoData?['precio']?.toString() ?? '');
+    _costoCtrl = TextEditingController(text: PrecioProducto.campo(widget.productoData?['costo']));
+    _descuentoCtrl = TextEditingController(
+      text: PrecioProducto.campo(widget.productoData?['precio_descuento']),
+    );
     _descCtrl = TextEditingController(text: widget.productoData?['descripcion'] ?? '');
     _ingredientesCtrl = TextEditingController(text: widget.productoData?['ingredientes'] ?? '');
     _codigoBarrasCtrl = TextEditingController(text: widget.productoData?['codigo_barras'] ?? '');
@@ -178,6 +185,8 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     _scrollCtrl.dispose();
     _materialCtrl.dispose();
     _piezasCtrl.dispose();
+    _costoCtrl.dispose();
+    _descuentoCtrl.dispose();
     for (final f in _filasInventario) {
       f.cantidadCtrl.dispose();
     }
@@ -363,6 +372,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
         'negocio_id': widget.negocioId,
         'nombre': _nombreCtrl.text.trim(),
         'precio': _esBodega ? 0.0 : (double.tryParse(_precioCtrl.text.trim()) ?? 0.0),
+        ..._preciosEspeciales(),
         'descripcion': _descCtrl.text.trim(),
         'foto_url': fotoFinal,
         'destacado': _destacado,
@@ -964,6 +974,103 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
     ];
   }
 
+  Map<String, dynamic> _preciosEspeciales() {
+    if (_esBodega || !_opciones.clientesDescuento) return const {};
+    final datos = <String, dynamic>{};
+    final costo = double.tryParse(_costoCtrl.text.trim());
+    final desc = double.tryParse(_descuentoCtrl.text.trim());
+    if (costo != null && costo > 0) {
+      datos['costo'] = costo;
+    } else if (widget.productoId != null) {
+      datos['costo'] = FieldValue.delete();
+    }
+    if (desc != null && desc > 0) {
+      datos['precio_descuento'] = desc;
+    } else if (widget.productoId != null) {
+      datos['precio_descuento'] = FieldValue.delete();
+    }
+    return datos;
+  }
+
+  String? _validarMontoOpcional(String? val, {required bool esDescuento}) {
+    final t = (val ?? '').trim();
+    if (t.isEmpty) return null;
+    final n = double.tryParse(t);
+    if (n == null || n < 0) return 'Monto inválido';
+    if (esDescuento && n <= 0) return 'Escribe el precio o déjalo vacío';
+    if (esDescuento) {
+      final venta = double.tryParse(_precioCtrl.text.trim()) ?? 0;
+      if (venta > 0 && n > venta) return 'Debe ser menor o igual al de venta';
+    }
+    return null;
+  }
+
+  List<Widget> _camposPrecio() {
+    if (_esBodega) return const [];
+    if (!_opciones.clientesDescuento) {
+      return [
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _precioCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: _cotizarWhatsapp ? 'Precio (\$) — 0 si solo se cotiza' : 'Precio (\$)',
+            border: const OutlineInputBorder(),
+          ),
+          validator: (val) {
+            if ((val ?? '').trim().isEmpty) {
+              return _cotizarWhatsapp ? null : 'Requerido';
+            }
+            return null;
+          },
+        ),
+      ];
+    }
+
+    return [
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _costoCtrl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: const InputDecoration(
+          labelText: 'Costo (\$)',
+          helperText: 'Lo que te cuesta. El cliente no lo ve.',
+          border: OutlineInputBorder(),
+        ),
+        validator: (val) => _validarMontoOpcional(val, esDescuento: false),
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _precioCtrl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(
+          labelText: _cotizarWhatsapp
+              ? 'Precio de venta (\$) — 0 si solo se cotiza'
+              : 'Precio de venta (\$)',
+          helperText: 'Lo que paga un cliente normal.',
+          border: const OutlineInputBorder(),
+        ),
+        validator: (val) {
+          if ((val ?? '').trim().isEmpty) {
+            return _cotizarWhatsapp ? null : 'Requerido';
+          }
+          return null;
+        },
+      ),
+      const SizedBox(height: 12),
+      TextFormField(
+        controller: _descuentoCtrl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: const InputDecoration(
+          labelText: 'Precio con descuento (\$)',
+          helperText: 'Lo que paga un cliente con descuento. Vacío si no aplica.',
+          border: OutlineInputBorder(),
+        ),
+        validator: (val) => _validarMontoOpcional(val, esDescuento: true),
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -986,23 +1093,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
               ),
               const SizedBox(height: 20),
               TextFormField(controller: _nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre del producto', border: OutlineInputBorder()), validator: (val) => val!.isEmpty ? 'Requerido' : null),
-              if (!_esBodega) ...[
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _precioCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: InputDecoration(
-                    labelText: _cotizarWhatsapp ? 'Precio (\$) — 0 si solo se cotiza' : 'Precio (\$)',
-                    border: const OutlineInputBorder(),
-                  ),
-                  validator: (val) {
-                    if ((val ?? '').trim().isEmpty) {
-                      return _cotizarWhatsapp ? null : 'Requerido';
-                    }
-                    return null;
-                  },
-                ),
-              ],
+              ..._camposPrecio(),
               const SizedBox(height: 12),
               TextFormField(controller: _descCtrl, maxLines: 2, decoration: const InputDecoration(labelText: 'Descripción corta', border: OutlineInputBorder())),
               SwitchListTile(

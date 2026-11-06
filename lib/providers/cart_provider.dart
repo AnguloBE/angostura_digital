@@ -21,8 +21,18 @@ class CartItem {
   final String id;
   final String nombre;
 
-  /// Precio base del producto (sin extras).
-  final double precioBase;
+  /// Precio base del producto (sin extras). Puede cambiar si el mostrador
+  /// pasa de precio de venta a precio con descuento.
+  double precioBase;
+
+  /// Precio de venta, aunque ahora se esté cobrando el descuento.
+  double precioVenta;
+
+  /// Precio con descuento del producto, si lo tiene.
+  double? precioDescuento;
+
+  /// Se cobró el precio con descuento.
+  bool esPrecioDescuento;
   final String? fotoUrl;
   final Map<String, String> detalles;
   final bool esPromocion;
@@ -52,6 +62,9 @@ class CartItem {
     required this.id,
     required this.nombre,
     required this.precioBase,
+    double? precioVenta,
+    this.precioDescuento,
+    this.esPrecioDescuento = false,
     this.fotoUrl,
     this.detalles = const {},
     this.esPromocion = false,
@@ -66,7 +79,8 @@ class CartItem {
     this.cantidad = 1,
   })  : ingredientesBase = ingredientesBase ?? const [],
         ingredientesQuitados = ingredientesQuitados ?? [],
-        extras = extras ?? [];
+        extras = extras ?? [],
+        precioVenta = precioVenta ?? precioBase;
 
   double get precioExtras => extras.fold(0.0, (suma, e) => suma + e.precio);
 
@@ -81,6 +95,8 @@ class CartItem {
         'nombre': nombre,
         'precio': precio,
         'precio_base': precioBase,
+        if (esPrecioDescuento) 'es_precio_descuento': true,
+        if (esPrecioDescuento) 'precio_lista': precioVenta,
         'cantidad': cantidad,
         if (fotoUrl != null && fotoUrl!.isNotEmpty) 'foto_url': fotoUrl,
         if (esPromocion) 'es_promocion': true,
@@ -154,6 +170,9 @@ class CartProvider with ChangeNotifier {
     bool esPromocion = false,
     List<String> ingredientesBase = const [],
     int? stockDisponible,
+    double? precioVenta,
+    double? precioDescuento,
+    bool esPrecioDescuento = false,
   }) {
     if (_negocioIdActual != null && _negocioIdActual != negocioId) return false;
     _negocioIdActual = negocioId;
@@ -170,6 +189,12 @@ class CartProvider with ChangeNotifier {
     if (mergeable != null) {
       mergeable.cantidad += 1;
       mergeable.stockDisponible = stockDisponible;
+      if (!esPromocion) {
+        mergeable.precioBase = precio;
+        mergeable.precioVenta = precioVenta ?? precio;
+        mergeable.precioDescuento = precioDescuento;
+        mergeable.esPrecioDescuento = esPrecioDescuento;
+      }
     } else {
       final lineaId = _generarLineaId(prodId);
       _items[lineaId] = CartItem(
@@ -177,6 +202,9 @@ class CartProvider with ChangeNotifier {
         id: prodId,
         nombre: nombre,
         precioBase: precio,
+        precioVenta: precioVenta,
+        precioDescuento: precioDescuento,
+        esPrecioDescuento: esPrecioDescuento,
         fotoUrl: fotoUrl,
         detalles: detalles,
         esPromocion: esPromocion,
@@ -198,6 +226,9 @@ class CartProvider with ChangeNotifier {
     required String tipoServicio,
     DateTime? citaInicio,
     int duracionMinutos = 30,
+    double? precioVenta,
+    double? precioDescuento,
+    bool esPrecioDescuento = false,
   }) {
     if (_negocioIdActual != null && _negocioIdActual != negocioId) return false;
     _negocioIdActual = negocioId;
@@ -214,11 +245,14 @@ class CartProvider with ChangeNotifier {
     }
 
     final lineaId = _generarLineaId(servicioId);
-    _items[lineaId] = CartItem(
+      _items[lineaId] = CartItem(
       lineaId: lineaId,
       id: servicioId,
       nombre: nombre,
       precioBase: precio,
+      precioVenta: precioVenta,
+      precioDescuento: precioDescuento,
+      esPrecioDescuento: esPrecioDescuento,
       fotoUrl: fotoUrl,
       esServicio: true,
       tipoServicio: tipoServicio,
@@ -276,6 +310,9 @@ class CartProvider with ChangeNotifier {
       id: base.id,
       nombre: base.nombre,
       precioBase: base.precioBase,
+      precioVenta: base.precioVenta,
+      precioDescuento: base.precioDescuento,
+      esPrecioDescuento: base.esPrecioDescuento,
       fotoUrl: base.fotoUrl,
       detalles: base.detalles,
       esPromocion: base.esPromocion,
@@ -296,6 +333,25 @@ class CartProvider with ChangeNotifier {
     notifyListeners();
     return nuevoId;
   }
+
+  /// El mostrador cambia todo el pedido entre precio de venta y precio con descuento.
+  void aplicarPrecioDescuento(bool activo) {
+    var cambio = false;
+    for (final item in _items.values) {
+      if (item.esPromocion) continue;
+      final desc = item.precioDescuento;
+      if (desc == null || desc <= 0) continue;
+      final usar = activo && desc != item.precioVenta;
+      final base = usar ? desc : item.precioVenta;
+      if (item.esPrecioDescuento == usar && item.precioBase == base) continue;
+      item.esPrecioDescuento = usar;
+      item.precioBase = base;
+      cambio = true;
+    }
+    if (cambio) notifyListeners();
+  }
+
+  bool get tienePrecioDescuento => _items.values.any((i) => i.esPrecioDescuento);
 
   void incrementarCantidad(String lineaId) { if (_items.containsKey(lineaId)) { _items[lineaId]!.cantidad += 1; notifyListeners(); } }
   void decrementarCantidad(String lineaId) { if (_items.containsKey(lineaId)) { if (_items[lineaId]!.cantidad > 1) { _items[lineaId]!.cantidad -= 1; } else { eliminarProducto(lineaId); } notifyListeners(); } }

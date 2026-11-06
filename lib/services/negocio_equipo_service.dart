@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/negocio_equipo_utils.dart';
 
 class NegocioMiembro {
@@ -350,6 +351,24 @@ class NegocioEquipoService {
       rol: rol,
       agregadoPorUid: agregadoPorUid,
     );
+  }
+
+  /// Pausa u publica el local y refresca la etiqueta del menú de cada miembro.
+  static Future<void> cambiarVisibilidadPublica(String negocioId, bool publico) async {
+    final estado = publico ? ComisionAppUtils.estadoActivo : ComisionAppUtils.estadoPausado;
+    await _db.collection('negocios').doc(negocioId).update({'estado': estado});
+
+    final equipo = await _equipoRef(negocioId).get();
+    for (final doc in equipo.docs) {
+      try {
+        await _accesoUsuarioRef(doc.id).doc(negocioId).set({
+          'estado': estado,
+          'actualizado': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      } catch (_) {
+        // El acceso de otra persona lo actualiza la Cloud Function.
+      }
+    }
   }
 
   static Future<void> quitarMiembro({

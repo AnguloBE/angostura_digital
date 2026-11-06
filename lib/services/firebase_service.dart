@@ -404,7 +404,10 @@ class AuthService {
     try {
       await user.updateDisplayName(nombre);
       await _firestore.collection('usuarios').doc(user.uid).set(
-        {'nombre': nombre},
+        {
+          'nombre': nombre,
+          'nombre_elegido': true,
+        },
         SetOptions(merge: true),
       );
       return null;

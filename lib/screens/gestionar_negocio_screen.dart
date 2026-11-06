@@ -10,6 +10,7 @@ import 'package:angostura_digital/widgets/square_image.dart';
 // --- IMPORTACIONES DE TUS PANTALLAS ---
 import 'package:angostura_digital/screens/agregar_producto_screen.dart';
 import 'package:angostura_digital/screens/agregar_mercancia_screen.dart';
+import 'package:angostura_digital/screens/agregar_cita_whatsapp_screen.dart';
 import 'package:angostura_digital/screens/agregar_servicio_screen.dart';
 import 'package:angostura_digital/screens/pedidos_negocio_screen.dart';
 import 'package:angostura_digital/screens/menu_negocio_screen.dart';
@@ -20,6 +21,7 @@ import 'package:angostura_digital/screens/configurar_envios_screen.dart';
 import 'package:angostura_digital/screens/mapa_ubicacion_screen.dart';
 import 'package:angostura_digital/screens/agregar_promocion_screen.dart';
 import 'package:angostura_digital/screens/equipo_negocio_screen.dart';
+import 'package:angostura_digital/screens/clientes_descuento_screen.dart';
 import 'package:angostura_digital/screens/ingredientes_negocio_screen.dart';
 import 'package:angostura_digital/screens/ubicaciones_negocio_screen.dart';
 import 'package:angostura_digital/screens/horario_citas_negocio_screen.dart';
@@ -36,6 +38,7 @@ import 'package:angostura_digital/utils/seccion_producto_utils.dart';
 import 'package:angostura_digital/widgets/filtro_secciones.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/producto_pedido_utils.dart';
+import 'package:angostura_digital/widgets/precio_visible.dart';
 import 'package:angostura_digital/services/negocio_equipo_service.dart';
 import 'package:angostura_digital/services/notificaciones_service.dart';
 
@@ -71,6 +74,8 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
   GeoPoint? _ubicacionGeo; 
   bool _isLoading = false;
   bool _datosCargados = false;
+  bool _publicando = false;
+  late String _estado;
   late OpcionesNegocio _opciones;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _opcionesSub; 
 
@@ -82,14 +87,18 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     _descCtrl = TextEditingController();
     _telefonoCtrl = TextEditingController();
     _opciones = OpcionesNegocio.porDefecto(widget.categoria);
+    _estado = widget.estadoActual;
     _opcionesSub = FirebaseFirestore.instance
         .collection('negocios')
         .doc(widget.negocioId)
         .snapshots()
         .listen((doc) {
       if (!mounted) return;
+      final data = doc.data();
+      final estado = data?['estado']?.toString();
       setState(() {
-        _opciones = OpcionesNegocio.desde(widget.categoria, doc.data());
+        _opciones = OpcionesNegocio.desde(widget.categoria, data);
+        if (estado != null && estado.isNotEmpty) _estado = estado;
       });
     });
     NegocioEquipoService.migrarPropietarioLegacy(widget.negocioId);
@@ -105,6 +114,30 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     _busquedaCatalogoCtrl.dispose();
     _opcionesSub?.cancel();
     super.dispose();
+  }
+
+  Future<void> _cambiarVisibilidadPublica(bool publico) async {
+    setState(() => _publicando = true);
+    try {
+      await NegocioEquipoService.cambiarVisibilidadPublica(widget.negocioId, publico);
+      if (!mounted) return;
+      setState(() => _estado = publico ? ComisionAppUtils.estadoActivo : ComisionAppUtils.estadoPausado);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(publico
+              ? 'Negocio público. Ya lo ven los clientes.'
+              : 'Negocio en pausa. Los clientes no lo ven.'),
+          backgroundColor: publico ? Colors.green : Colors.deepPurple,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo cambiar la visibilidad: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _publicando = false);
+    }
   }
 
   bool _coincideBusquedaCatalogo(Map<String, dynamic> data, String q) =>
@@ -296,6 +329,18 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     await _abrirConfiguracionHorario(doc.data()?['horario'] as Map<String, dynamic>?);
   }
 
+  void _abrirAgregarCita() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AgregarCitaWhatsappScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+        ),
+      ),
+    );
+  }
+
   void _irPedidos({bool encargos = false}) {
     Navigator.push(
       context,
@@ -386,6 +431,18 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => AgregarMercanciaScreen(
+          negocioId: widget.negocioId,
+          nombreNegocio: _nombreVisible,
+        ),
+      ),
+    );
+  }
+
+  void _irClientesDescuento() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ClientesDescuentoScreen(
           negocioId: widget.negocioId,
           nombreNegocio: _nombreVisible,
         ),
@@ -518,6 +575,7 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
       if (_opciones.repisas) add(Icons.shelves, 'Repisas', _irUbicaciones);
       if (_opciones.stock) add(Icons.inventory_2, 'Entrada de mercancía', _irMercancia);
     } else if (CategoriasNegocio.esServicios(cat)) {
+      add(Icons.add_circle_outline, 'Agregar cita', _abrirAgregarCita);
       add(Icons.analytics_outlined, 'Historial', _irHistorial);
       add(Icons.campaign_outlined, 'Nueva promoción', _irPromo);
       add(Icons.event_available, 'Horario de citas', _irHorarioCitas);
@@ -555,6 +613,9 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
       }
       add(Icons.schedule, 'Horario', _abrirHorarioGuardado);
       add(Icons.visibility_outlined, 'Ver como cliente', _irMenuPublico);
+    }
+    if (_opciones.clientesDescuento && !CategoriasNegocio.esBodega(cat)) {
+      add(Icons.loyalty_outlined, 'Clientes con descuento', _irClientesDescuento);
     }
     add(Icons.groups_outlined, 'Equipo', _irEquipo);
     return acciones;
@@ -656,8 +717,8 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
   @override
   Widget build(BuildContext context) {
     final bool esBodega = CategoriasNegocio.esBodega(widget.categoria);
-    final bool isPausado = ComisionAppUtils.esPausado(widget.estadoActual);
-    final bool isActivo = ComisionAppUtils.esActivo(widget.estadoActual);
+    final bool isPausado = ComisionAppUtils.esPausado(_estado);
+    final bool isActivo = ComisionAppUtils.esActivo(_estado);
     final bool puedeOperar = esBodega || isActivo || isPausado;
     final MaterialColor tono = isPausado && !esBodega
         ? Colors.deepPurple
@@ -692,9 +753,9 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
               esBodega
                   ? 'Bodega interna. No sale en Explorar. Solo inventario y salidas.'
                   : (isPausado
-                      ? 'Pausado. Los clientes no ven el negocio hasta regularizar el pago de la app.'
+                      ? 'En pausa. Nadie lo ve en Explorar hasta que lo publiques.'
                       : (isActivo
-                          ? 'Activo. ${CategoriasNegocio.resumen(widget.categoria)}'
+                          ? 'Público. ${CategoriasNegocio.resumen(widget.categoria)}'
                           : 'Estado del negocio en actualización.')),
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -704,6 +765,25 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
               ),
             ),
           ),
+          if (!esBodega)
+            Material(
+              color: tono.shade50,
+              child: SwitchListTile(
+                value: isActivo,
+                activeColor: Colors.green,
+                title: Text(
+                  isPausado ? 'Oculto al público' : 'Visible para todos',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  isPausado
+                      ? 'Actívalo cuando ya tengas productos y quieras que el local salga en Explorar.'
+                      : 'Los clientes lo ven. Páusalo si todavía no quieres mostrarlo.',
+                  style: const TextStyle(fontSize: 12, height: 1.3),
+                ),
+                onChanged: _publicando ? null : _cambiarVisibilidadPublica,
+              ),
+            ),
           
           Expanded(
             child: SingleChildScrollView(
@@ -715,6 +795,26 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                   if (puedeOperar) ...[
                     _tituloBloque('Día a día'),
                     _botonPrincipal(tono),
+                    if (CategoriasNegocio.esServicios(widget.categoria)) ...[
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _abrirAgregarCita,
+                          icon: const Icon(Icons.add_circle_outline),
+                          label: const Text(
+                            'Agregar cita',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: tono.shade800,
+                            side: BorderSide(color: tono.shade300),
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 6),
                     Text(
                       CategoriasNegocio.ayudaVentaEnLocal(widget.categoria),
@@ -922,7 +1022,19 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                                         child: Column(
                                           crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center,
                                           children: [
-                                            Text(promo['titulo'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13), maxLines: 2, overflow: TextOverflow.ellipsis),
+                                            Row(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                if (promo['destacado'] == true)
+                                                  Padding(
+                                                    padding: const EdgeInsets.only(top: 1, right: 2),
+                                                    child: Icon(Icons.star_rounded, size: 14, color: Colors.amber.shade700),
+                                                  ),
+                                                Expanded(
+                                                  child: Text(promo['titulo'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13), maxLines: 2, overflow: TextOverflow.ellipsis),
+                                                ),
+                                              ],
+                                            ),
                                             Text('\$${promo['precio_promo']}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 14)),
                                             const Spacer(),
                                             Row(
@@ -1187,7 +1299,10 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                                               ],
                                               if (!esBodega) ...[
                                                 const SizedBox(height: 6),
-                                                Text('\$${prod['precio']}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 17)),
+                                                if (_opciones.clientesDescuento)
+                                                  PreciosInternos(data: prod)
+                                                else
+                                                  Text('\$${prod['precio']}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 17)),
                                               ],
                                               if (prod['descripcion'] != null && prod['descripcion'].toString().isNotEmpty) ...[const SizedBox(height: 6), Text(prod['descripcion'], style: TextStyle(fontSize: 13, color: Colors.grey.shade800))],
                                               if (extraWidgets.isNotEmpty) ...[const SizedBox(height: 8), Column(crossAxisAlignment: CrossAxisAlignment.start, children: extraWidgets)],

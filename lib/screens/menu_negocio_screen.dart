@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:provider/provider.dart';
 import 'package:angostura_digital/providers/cart_provider.dart';
 import 'package:angostura_digital/screens/carrito_screen.dart'; 
@@ -13,6 +14,9 @@ import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/utils/opciones_negocio.dart';
+import 'package:angostura_digital/utils/precio_producto_utils.dart';
+import 'package:angostura_digital/widgets/precio_visible.dart';
+import 'package:angostura_digital/services/negocio_clientes_descuento_service.dart';
 import 'package:angostura_digital/widgets/reservar_cita_sheet.dart';
 import 'package:angostura_digital/utils/orden_productos_utils.dart';
 import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
@@ -47,10 +51,41 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
   String _busqueda = '';
   String _seccionMenu = '';
   bool _salidaConfirmada = false;
+  bool _soyClienteDescuento = false;
+  bool _rolPrecioListo = false;
+  bool _cobrarDescuentoMostrador = false;
 
   bool get _esBodega => CategoriasNegocio.esBodega(widget.categoriaNegocio);
 
   bool get _ocultarPrecios => widget.modoTrabajador && _esBodega;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargarSiClienteDescuento();
+  }
+
+  Future<void> _cargarSiClienteDescuento() async {
+    if (widget.modoTrabajador) {
+      _rolPrecioListo = true;
+      return;
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) {
+      if (mounted) setState(() => _rolPrecioListo = true);
+      return;
+    }
+    try {
+      final si = await NegocioClientesDescuentoService.esCliente(widget.negocioId, uid);
+      if (!mounted) return;
+      setState(() {
+        _soyClienteDescuento = si;
+        _rolPrecioListo = true;
+      });
+    } catch (_) {
+      if (mounted) setState(() => _rolPrecioListo = true);
+    }
+  }
 
   @override
   void dispose() {
@@ -297,6 +332,13 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
             dataNegocio['categoria']?.toString(),
             dataNegocio,
           );
+          final precioPendiente = opcionesNegocio.clientesDescuento &&
+              !_esBodega &&
+              !widget.modoTrabajador &&
+              !_rolPrecioListo;
+          final usarPrecioDescuento = opcionesNegocio.clientesDescuento &&
+              !_esBodega &&
+              (widget.modoTrabajador ? _cobrarDescuentoMostrador : _soyClienteDescuento);
           final mensajeWhatsapp = CategoriasNegocio.esImprenta(dataNegocio['categoria']?.toString())
               ? 'Hola, quiero cotizar un trabajo (lona, sticker, uniforme, gorra o bordado).'
               : 'Hola, quiero hacer un encargo.';
@@ -340,6 +382,39 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                   width: double.infinity, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   decoration: BoxDecoration(color: !isAbierto ? Colors.red.shade50 : Colors.green.shade50, border: Border(bottom: BorderSide(color: Colors.grey.shade300)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))]),
                   child: Row(children: [Icon(!isAbierto ? Icons.lock_clock : Icons.store_mall_directory, color: colorTiempo, size: 20), const SizedBox(width: 8), Expanded(child: Text(mensajeTiempo.toUpperCase(), style: TextStyle(color: colorTiempo, fontWeight: FontWeight.bold, fontSize: 13)))]),
+                ),
+
+              if (widget.modoTrabajador && opcionesNegocio.clientesDescuento && !_esBodega)
+                Material(
+                  color: Colors.teal.shade50,
+                  child: SwitchListTile(
+                    dense: true,
+                    title: const Text(
+                      'Cobrar precio con descuento',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    subtitle: const Text('Para un cliente con precio especial.'),
+                    value: _cobrarDescuentoMostrador,
+                    activeThumbColor: Colors.teal.shade700,
+                    onChanged: (v) {
+                      setState(() => _cobrarDescuentoMostrador = v);
+                      context.read<CartProvider>().aplicarPrecioDescuento(v);
+                    },
+                  ),
+                ),
+              if (!widget.modoTrabajador && usarPrecioDescuento)
+                Container(
+                  width: double.infinity,
+                  color: Colors.teal.shade50,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Text(
+                    'En este local ves precios con descuento.',
+                    style: TextStyle(
+                      color: Colors.teal.shade900,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
                 ),
               
               if (!widget.modoTrabajador && (ubicacion.isNotEmpty || ubicacionGeo != null))
@@ -624,6 +699,8 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                                               doc: doc,
                                               isAbierto: isAbierto,
                                               dataNegocio: dataNegocio,
+                                              usarPrecioDescuento: usarPrecioDescuento,
+                                              precioPendiente: precioPendiente,
                                             ),
                                           ),
                                       ],
@@ -700,6 +777,8 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                                                     doc: bloque.fila[c],
                                                     isAbierto: isAbierto,
                                                     dataNegocio: dataNegocio,
+                                                    usarPrecioDescuento: usarPrecioDescuento,
+                                                    precioPendiente: precioPendiente,
                                                   )
                                                 : const SizedBox.shrink(),
                                           ),
@@ -729,6 +808,8 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
     required QueryDocumentSnapshot doc,
     required bool isAbierto,
     required Map<String, dynamic> dataNegocio,
+    required bool usarPrecioDescuento,
+    required bool precioPendiente,
   }) {
     final data = doc.data() as Map<String, dynamic>;
     final String? prodFoto = data['foto_url'];
@@ -766,6 +847,13 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
       if (vence != null) extraWidgets.add(_infoChip(vence));
     }
 
+    final sinPrecio =
+        CategoriasNegocio.sinRegistroDinero(dataNegocio['categoria']?.toString());
+    final cobro = PrecioProducto.resolver(
+      data,
+      conDescuento: usarPrecioDescuento,
+      sinDinero: sinPrecio,
+    );
     final controlaInventario = !esServicio && data['controla_inventario'] == true;
     final stock = NegocioUbicacionService.stockTotal(data);
     final agotado = controlaInventario && stock <= 0;
@@ -821,14 +909,14 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                   ),
                   if (!_ocultarPrecios) ...[
                     const SizedBox(height: 6),
-                    Text(
-                      '\$${data['precio']}',
-                      style: TextStyle(
-                        color: !isAbierto ? Colors.grey : Colors.green,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 17,
-                      ),
-                    ),
+                    if (precioPendiente)
+                      const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      PrecioVisible(cobro: cobro, activo: isAbierto),
                   ],
                   if (data['descripcion'] != null && data['descripcion'].toString().isNotEmpty) ...[
                     const SizedBox(height: 6),
@@ -885,6 +973,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                     ),
                   if (isAbierto &&
                       !agotado &&
+                      !precioPendiente &&
                       (widget.modoTrabajador ||
                           data['cotizar_whatsapp'] != true ||
                           ((data['precio'] as num?) ?? 0) != 0))
@@ -900,6 +989,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                           dataNegocio: dataNegocio,
                           controlaInventario: controlaInventario,
                           stock: stock,
+                          cobro: cobro,
                         ),
                         child: Container(
                           padding: const EdgeInsets.all(8),
@@ -935,13 +1025,12 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
     required Map<String, dynamic> dataNegocio,
     required bool controlaInventario,
     required int stock,
+    required PrecioCobrado cobro,
   }) async {
     final cart = context.read<CartProvider>();
     final esServicio = data['es_servicio'] == true;
 
-    final sinPrecio =
-        CategoriasNegocio.sinRegistroDinero(dataNegocio['categoria']?.toString());
-    final precioItem = sinPrecio ? 0.0 : (data['precio'] ?? 0).toDouble();
+    final precioItem = cobro.cobrar;
 
     if (!esServicio) {
       if (controlaInventario && cart.cantidadEnCarrito(docId) >= stock) {
@@ -963,6 +1052,9 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
         detalles: ProductoPedidoUtils.detallesDesdeFirestore(data),
         ingredientesBase: NegocioIngredienteService.listaIngredientes(data),
         stockDisponible: controlaInventario ? stock : null,
+        precioVenta: cobro.venta,
+        precioDescuento: cobro.descuento,
+        esPrecioDescuento: cobro.aplicado,
       );
       if (exito) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -975,7 +1067,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
           ),
         );
       } else {
-        _mostrarAlertaCarrito(context, cart, negocioId, docId, data, foto);
+        _mostrarAlertaCarrito(context, cart, negocioId, docId, data, foto, cobro);
       }
       return;
     }
@@ -989,7 +1081,9 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
         negocioId: negocioId,
         servicioId: docId,
         servicioNombre: data['nombre']?.toString() ?? 'Servicio',
-        precio: (data['precio'] ?? 0).toDouble(),
+        precio: cobro.cobrar,
+        precioLista: cobro.aplicado ? cobro.venta : null,
+        esPrecioDescuento: cobro.aplicado,
         fotoUrl: foto,
         duracionMinutos: duracion,
         datosNegocio: dataNegocio,
@@ -1011,9 +1105,12 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
         negocioId,
         docId,
         data['nombre'] ?? '',
-        (data['precio'] ?? 0).toDouble(),
+        cobro.cobrar,
         foto,
         tipoServicio: 'solicitud',
+        precioVenta: cobro.venta,
+        precioDescuento: cobro.descuento,
+        esPrecioDescuento: cobro.aplicado,
       );
       if (!context.mounted) return;
       if (exito) {
@@ -1028,7 +1125,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
           ),
         );
       } else {
-        _mostrarAlertaCarritoServicio(context, cart, negocioId, docId, data, foto,
+        _mostrarAlertaCarritoServicio(context, cart, negocioId, docId, data, foto, cobro,
             tipoServicio: 'solicitud');
       }
     }
@@ -1040,7 +1137,8 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
     String negocioId,
     String servicioId,
     Map<String, dynamic> data,
-    String? foto, {
+    String? foto,
+    PrecioCobrado cobro, {
     required String tipoServicio,
     DateTime? citaInicio,
     int duracionMinutos = 30,
@@ -1064,20 +1162,26 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                   negocioId,
                   servicioId,
                   data['nombre'] ?? '',
-                  (data['precio'] ?? 0).toDouble(),
+                  cobro.cobrar,
                   foto,
                   tipoServicio: 'cita',
                   citaInicio: citaInicio,
                   duracionMinutos: duracionMinutos,
+                  precioVenta: cobro.venta,
+                  precioDescuento: cobro.descuento,
+                  esPrecioDescuento: cobro.aplicado,
                 );
               } else {
                 cart.agregarServicio(
                   negocioId,
                   servicioId,
                   data['nombre'] ?? '',
-                  (data['precio'] ?? 0).toDouble(),
+                  cobro.cobrar,
                   foto,
                   tipoServicio: 'solicitud',
+                  precioVenta: cobro.venta,
+                  precioDescuento: cobro.descuento,
+                  esPrecioDescuento: cobro.aplicado,
                 );
               }
               Navigator.pop(ctx);
@@ -1096,6 +1200,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
     String prodId,
     Map<String, dynamic> data,
     String? foto,
+    PrecioCobrado cobro,
   ) {
     showDialog(
       context: context,
@@ -1120,10 +1225,13 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                 negocioId,
                 prodId,
                 data['nombre'] ?? '',
-                (data['precio'] ?? 0).toDouble(),
+                cobro.cobrar,
                 foto,
                 detalles: ProductoPedidoUtils.detallesDesdeFirestore(data),
                 ingredientesBase: NegocioIngredienteService.listaIngredientes(data),
+                precioVenta: cobro.venta,
+                precioDescuento: cobro.descuento,
+                esPrecioDescuento: cobro.aplicado,
               );
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(

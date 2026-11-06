@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:provider/provider.dart';
 import 'package:angostura_digital/providers/cart_provider.dart';
@@ -14,6 +16,9 @@ import 'package:angostura_digital/utils/tiempo_estimado_utils.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/producto_busqueda_utils.dart';
 import 'package:angostura_digital/utils/cuadricula_ancho.dart';
+import 'package:angostura_digital/utils/precio_producto_utils.dart';
+import 'package:angostura_digital/widgets/precio_visible.dart';
+import 'package:angostura_digital/services/negocio_clientes_descuento_service.dart';
 
 class ExplorarTab extends StatefulWidget {
   const ExplorarTab({super.key});
@@ -28,7 +33,38 @@ class _ExplorarTabState extends State<ExplorarTab> {
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
-  String _categoriaSeleccionada = ''; 
+  String _categoriaSeleccionada = '';
+  final Set<String> _negociosDescuento = {};
+  StreamSubscription<Set<String>>? _descuentosSub;
+  bool _descuentosListos = FirebaseAuth.instance.currentUser == null;
+
+  @override
+  void initState() {
+    super.initState();
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    _descuentosSub = NegocioClientesDescuentoService.streamNegociosActivos(uid).listen(
+      (ids) {
+        if (!mounted) return;
+        setState(() {
+          _descuentosListos = true;
+          _negociosDescuento
+            ..clear()
+            ..addAll(ids);
+        });
+      },
+      onError: (_) {
+        if (mounted) setState(() => _descuentosListos = true);
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _descuentosSub?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  } 
 
   Future<void> _navegarAMenu(BuildContext context, String negocioId) async {
     final negDoc = await FirebaseFirestore.instance.collection('negocios').doc(negocioId).get();
@@ -346,6 +382,8 @@ class _ExplorarTabState extends State<ExplorarTab> {
     if (data['tallas_disponibles'] != null && data['tallas_disponibles'].toString().isNotEmpty) extraWidgets.add(_infoChip('Tallas: ${data['tallas_disponibles']}'));
     if (data['colores'] != null && data['colores'].toString().isNotEmpty) extraWidgets.add(_infoChip('Colores: ${data['colores']}'));
 
+    final conDescuento = _negociosDescuento.contains(negocioId);
+    final cobro = PrecioProducto.resolver(data, conDescuento: conDescuento);
     final controlaInventario = data['controla_inventario'] == true;
     final stock = NegocioUbicacionService.stockTotal(data);
     final agotado = controlaInventario && stock <= 0;
@@ -368,13 +406,14 @@ class _ExplorarTabState extends State<ExplorarTab> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(data['nombre'] ?? '', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, height: 1.15, color: Colors.black87)),
-                  const SizedBox(height: 6), Text('\$${data['precio']}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 17)),
+                  const SizedBox(height: 6),
+                  PrecioVisible(cobro: cobro),
                   if (data['descripcion'] != null && data['descripcion'].toString().isNotEmpty) ...[const SizedBox(height: 6), Text(data['descripcion'], style: TextStyle(fontSize: 13, color: Colors.grey.shade800))],
                   if (extraWidgets.isNotEmpty) ...[const SizedBox(height: 8), Column(crossAxisAlignment: CrossAxisAlignment.start, children: extraWidgets)],
                   if (agotado) ...[const SizedBox(height: 8), _badgeStock('Agotado', Colors.red)],
                   if (pocas) ...[const SizedBox(height: 8), _badgeStock('¡Solo quedan $stock!', Colors.orange.shade800)],
                   const SizedBox(height: 12),
-                  if (!agotado)
+                  if (!agotado && _descuentosListos)
                     Align(
                       alignment: Alignment.bottomRight,
                       child: GestureDetector(
@@ -388,11 +427,14 @@ class _ExplorarTabState extends State<ExplorarTab> {
                             negocioId,
                             doc.id,
                             data['nombre'] ?? '',
-                            (data['precio'] ?? 0).toDouble(),
+                            cobro.cobrar,
                             data['foto_url'] ?? '',
                             detalles: ProductoPedidoUtils.detallesDesdeFirestore(data),
                             ingredientesBase: NegocioIngredienteService.listaIngredientes(data),
                             stockDisponible: controlaInventario ? stock : null,
+                            precioVenta: cobro.venta,
+                            precioDescuento: cobro.descuento,
+                            esPrecioDescuento: cobro.aplicado,
                           );
                           if (exito) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${data['nombre']} agregado'), duration: const Duration(seconds: 1), backgroundColor: Colors.green));
                         },

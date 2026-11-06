@@ -42,6 +42,53 @@ class PedidoServiciosUtils {
     }
   }
 
+  static DateTime? inicioCita(Map<String, dynamic> data) {
+    final directa = ServicioCitaUtils.parseCitaInicio(data['cita_inicio']);
+    if (directa != null) return directa;
+    final productos = data['productos'] as List? ?? [];
+    for (final p in productos) {
+      if (p is! Map) continue;
+      final inicio = ServicioCitaUtils.parseCitaInicio(p['cita_inicio']);
+      if (inicio != null) return inicio;
+    }
+    return null;
+  }
+
+  static int duracionCitaMinutos(Map<String, dynamic> data) {
+    final directa = data['duracion_minutos'];
+    if (directa is num && directa > 0) return directa.toInt();
+    final productos = data['productos'] as List? ?? [];
+    for (final p in productos) {
+      if (p is! Map) continue;
+      final d = (p['duracion_minutos'] as num?)?.toInt();
+      if (d != null && d > 0) return d;
+    }
+    return ServicioCitaUtils.intervaloMinutosDefault;
+  }
+
+  /// La cita sigue en la bandeja hasta 3 horas después de terminar.
+  /// Una solicitud sin hora se queda mientras esté pendiente.
+  static bool sigueEnBandeja(Map<String, dynamic> data, {DateTime? ahora}) {
+    final now = ahora ?? DateTime.now();
+    final estado = (data['estado'] ?? '').toString();
+    if (estado == estadoCancelado) return false;
+    final inicio = inicioCita(data);
+    if (inicio != null) {
+      final fin = inicio.add(Duration(minutes: duracionCitaMinutos(data)));
+      return now.isBefore(fin.add(const Duration(hours: 3)));
+    }
+    return estado == estadoPendiente;
+  }
+
+  static String grupoDiaCita(DateTime inicio, {DateTime? ahora}) {
+    final now = ahora ?? DateTime.now();
+    final dia = DateTime(inicio.year, inicio.month, inicio.day);
+    final hoy = DateTime(now.year, now.month, now.day);
+    if (dia == hoy) return 'Hoy';
+    if (dia == hoy.add(const Duration(days: 1))) return 'Mañana';
+    return ServicioCitaUtils.formatearFechaConDia(inicio);
+  }
+
   static String resumenCitaDesdePedido(Map<String, dynamic> data) {
     final productos = data['productos'] as List? ?? [];
     for (final p in productos) {

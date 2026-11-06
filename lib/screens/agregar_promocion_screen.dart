@@ -4,7 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
 import 'package:angostura_digital/globals.dart' as globals;
+import 'package:angostura_digital/utils/dias_semana.dart';
 import 'package:angostura_digital/utils/mobile_image_utils.dart';
+import 'package:angostura_digital/widgets/selector_dias_semana.dart';
 
 class AgregarPromocionScreen extends StatefulWidget {
   final String negocioId;
@@ -34,7 +36,9 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
   late TextEditingController _precioNormalCtrl;
   late TextEditingController _precioPromoCtrl; 
   
-  DateTime? _fechaFinal; // --- NUEVA VARIABLE PARA LA FECHA ---
+  DateTime? _fechaFinal;
+  bool _destacado = false;
+  Set<int> _dias = {};
   String? _fotoUrlExistente;
   Uint8List? _imagenBytes;
 
@@ -51,6 +55,8 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
     if (widget.promoData?['fecha_final'] != null) {
       _fechaFinal = (widget.promoData!['fecha_final'] as Timestamp).toDate();
     }
+    _destacado = widget.promoData?['destacado'] == true;
+    _dias = DiasSemana.leer(widget.promoData?['dias_semana']).toSet();
   }
 
   Future<void> _mostrarOpcionesImagen() async {
@@ -71,11 +77,6 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Agrega una foto llamativa para tu promoción', style: TextStyle(color: Colors.white)), backgroundColor: Colors.orange));
       return;
     }
-    if (_fechaFinal == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Por favor, selecciona hasta cuándo es válida la oferta', style: TextStyle(color: Colors.white)), backgroundColor: Colors.orange));
-      return;
-    }
-
     setState(() => _isLoading = true);
 
     try {
@@ -88,7 +89,7 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
         fotoFinal = await (await uploadTask).ref.getDownloadURL();
       }
 
-      Map<String, dynamic> datosPromo = {
+      final datosPromo = <String, dynamic>{
         'negocio_id': widget.negocioId,
         'nombre_negocio': widget.nombreNegocio,
         'titulo': _tituloCtrl.text.trim(),
@@ -96,8 +97,14 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
         'precio_normal': double.tryParse(_precioNormalCtrl.text.trim()) ?? 0.0,
         'precio_promo': double.tryParse(_precioPromoCtrl.text.trim()) ?? 0.0,
         'foto_url': fotoFinal,
-        'fecha_final': Timestamp.fromDate(_fechaFinal!), 
+        'destacado': _destacado,
+        'dias_semana': DiasSemana.leer(_dias),
       };
+      if (_fechaFinal != null) {
+        datosPromo['fecha_final'] = Timestamp.fromDate(_fechaFinal!);
+      } else if (widget.promoId != null) {
+        datosPromo['fecha_final'] = FieldValue.delete();
+      }
 
       if (widget.promoId == null) {
         datosPromo['fecha_creacion'] = FieldValue.serverTimestamp();
@@ -146,15 +153,32 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
                 elevation: 0, color: Colors.red.shade50, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: BorderSide(color: Colors.red.shade200)),
                 child: ListTile(
                   leading: const Icon(Icons.event_busy, color: Colors.redAccent),
-                  title: Text(_fechaFinal == null ? '¿Hasta cuándo es válida?' : 'Válida hasta: ${_fechaFinal!.day}/${_fechaFinal!.month}/${_fechaFinal!.year}', style: TextStyle(fontWeight: FontWeight.bold, color: _fechaFinal == null ? Colors.redAccent : Colors.red.shade900)),
+                  title: Text(
+                    _fechaFinal == null ? 'Fecha límite (opcional)' : 'Válida hasta: ${_fechaFinal!.day}/${_fechaFinal!.month}/${_fechaFinal!.year}',
+                    style: TextStyle(fontWeight: FontWeight.bold, color: _fechaFinal == null ? Colors.redAccent : Colors.red.shade900),
+                  ),
+                  subtitle: Text(
+                    _fechaFinal == null
+                        ? 'Si no eliges fecha, sigue activa hasta que la borres.'
+                        : 'Deja de mostrarse al día siguiente.',
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   trailing: const Icon(Icons.edit_calendar, color: Colors.redAccent),
                   onTap: () async {
-                    final seleccion = await showDatePicker(context: context, initialDate: _fechaFinal ?? DateTime.now(), firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)));
+                    final seleccion = await elegirFechaLimite(context, _fechaFinal);
                     if (seleccion != null) setState(() => _fechaFinal = seleccion);
                   },
                 ),
               ),
-              const SizedBox(height: 20),
+              if (_fechaFinal != null)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => setState(() => _fechaFinal = null),
+                    child: const Text('Quitar fecha límite'),
+                  ),
+                ),
+              const SizedBox(height: 12),
 
               TextFormField(controller: _tituloCtrl, decoration: const InputDecoration(labelText: '¿Qué ofreces? (Ej. Combo Hamburguesa)', border: OutlineInputBorder()), validator: (val) => val!.isEmpty ? 'Requerido' : null),
               const SizedBox(height: 12),
@@ -167,7 +191,22 @@ class _AgregarPromocionScreenState extends State<AgregarPromocionScreen> {
                   Expanded(child: TextFormField(controller: _precioPromoCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'Precio Oferta (\$)', border: OutlineInputBorder(), prefixIcon: Icon(Icons.attach_money, color: Colors.green)), validator: (val) => val!.isEmpty ? 'Requerido' : null)),
                 ],
               ),
-              const SizedBox(height: 30),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Destacar'),
+                subtitle: const Text('Sale primero en Promociones'),
+                value: _destacado,
+                activeThumbColor: Colors.amber.shade800,
+                secondary: Icon(Icons.star_rounded, color: Colors.amber.shade700),
+                onChanged: (v) => setState(() => _destacado = v),
+              ),
+              const SizedBox(height: 4),
+              SelectorDiasSemana(
+                seleccion: _dias,
+                onChanged: (v) => setState(() => _dias = v),
+              ),
+              const SizedBox(height: 16),
               if (_isLoading) const Center(child: CircularProgressIndicator()) else ElevatedButton.icon(style: ElevatedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16), backgroundColor: Colors.redAccent, foregroundColor: Colors.white), onPressed: _guardarPromocion, icon: const Icon(Icons.campaign), label: Text(widget.promoId == null ? 'Publicar Promoción' : 'Guardar Cambios', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
             ],
           ),

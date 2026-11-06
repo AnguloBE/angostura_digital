@@ -403,6 +403,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
       'negocio_id': negocioId,
       'negocio_nombre': negocioNombre,
       'productos': listaProductos,
+      if (cart.tienePrecioDescuento) 'cliente_con_descuento': true,
       'subtotal': cart.subtotal,
       'costo_envio': cart.costoEnvio,
       'comision_app': comisionMonto,
@@ -494,6 +495,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
       if (clienteNombre.isNotEmpty) 'cliente_nombre': clienteNombre,
       if (clienteTelefono.isNotEmpty) 'cliente_telefono': clienteTelefono,
       'productos': listaProductos,
+      if (cart.tienePrecioDescuento) 'cliente_con_descuento': true,
       'subtotal': cart.subtotal,
       'costo_envio': 0,
       'comision_app': comisionMonto,
@@ -1512,12 +1514,38 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                               ),
                                             ),
                                           if (!_esBodegaSalida)
-                                            Text(
-                                              '\$${item.precio.toStringAsFixed(2)}',
-                                              style: const TextStyle(
-                                                color: Colors.green,
-                                                fontWeight: FontWeight.bold,
-                                              ),
+                                            Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                if (item.esPrecioDescuento &&
+                                                    item.precioVenta > item.precioBase)
+                                                  Text(
+                                                    '\$${(item.precioVenta + item.precioExtras).toStringAsFixed(2)}',
+                                                    style: const TextStyle(
+                                                      fontSize: 12,
+                                                      color: Colors.grey,
+                                                      decoration: TextDecoration.lineThrough,
+                                                    ),
+                                                  ),
+                                                Text(
+                                                  '\$${item.precio.toStringAsFixed(2)}',
+                                                  style: TextStyle(
+                                                    color: item.esPrecioDescuento
+                                                        ? Colors.teal.shade800
+                                                        : Colors.green,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                                if (item.esPrecioDescuento)
+                                                  Text(
+                                                    'Precio con descuento',
+                                                    style: TextStyle(
+                                                      fontSize: 11,
+                                                      color: Colors.teal.shade700,
+                                                      fontWeight: FontWeight.w600,
+                                                    ),
+                                                  ),
+                                              ],
                                             ),
                                           if (item.esServicio &&
                                               item.tipoServicio == 'cita' &&

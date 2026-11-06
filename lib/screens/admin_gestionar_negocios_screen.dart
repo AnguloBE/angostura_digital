@@ -71,7 +71,7 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
                   const Padding(
                     padding: EdgeInsets.only(top: 12),
                     child: Text(
-                      'Después de crear el negocio, usa «Equipo» para agregar dueños y trabajadores.',
+                      'Queda en pausa: los clientes no lo ven hasta que el dueño lo publique. Después usa «Equipo» para agregar dueños y trabajadores.',
                       style: TextStyle(fontSize: 12, color: Colors.black54),
                     ),
                   ),
@@ -104,9 +104,10 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
       if (esEdicion) {
         await FirebaseFirestore.instance.collection('negocios').doc(docId).update(payload);
       } else {
+        final esBodega = CategoriasNegocio.esBodega(categoria);
         await FirebaseFirestore.instance.collection('negocios').add({
           ...payload,
-          'estado': ComisionAppUtils.estadoActivo,
+          'estado': esBodega ? ComisionAppUtils.estadoActivo : ComisionAppUtils.estadoPausado,
           'fecha_creacion': FieldValue.serverTimestamp(),
           if (!CategoriasNegocio.esBodega(categoria)) ...const ComisionAppConfig().aFirestore(),
           if (!CategoriasNegocio.esBodega(categoria)) 'comision_acumulada': 0,
@@ -116,7 +117,16 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(esEdicion ? 'Negocio actualizado' : 'Negocio creado'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(
+              esEdicion
+                  ? 'Negocio actualizado'
+                  : (CategoriasNegocio.esBodega(categoria)
+                      ? 'Bodega creada'
+                      : 'Negocio creado. Queda en pausa hasta que el dueño lo publique.'),
+            ),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
@@ -133,6 +143,7 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
     var opciones = OpcionesNegocio.desde(categoria, data);
     final puedeStock = OpcionesNegocio.tipoPuedeStock(categoria);
     final puedeWhatsapp = CategoriasNegocio.visibleAlPublico(categoria);
+    final puedeDescuento = CategoriasNegocio.visibleAlPublico(categoria);
 
     final ok = await showDialog<bool>(
       context: context,
@@ -179,7 +190,17 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
                     value: opciones.whatsappEncargos,
                     onChanged: (v) => setDialog(() => opciones = opciones.copiar(whatsappEncargos: v)),
                   ),
-                if (!puedeStock && !puedeWhatsapp)
+                if (puedeDescuento)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Clientes con descuento'),
+                    subtitle: const Text(
+                      'Precio especial para técnicos, mayoristas u otros. El negocio carga costo, precio de venta y precio con descuento, y elige quién lo ve.',
+                    ),
+                    value: opciones.clientesDescuento,
+                    onChanged: (v) => setDialog(() => opciones = opciones.copiar(clientesDescuento: v)),
+                  ),
+                if (!puedeStock && !puedeWhatsapp && !puedeDescuento)
                   const Padding(
                     padding: EdgeInsets.only(top: 12),
                     child: Text('Este tipo no tiene opciones extra.'),

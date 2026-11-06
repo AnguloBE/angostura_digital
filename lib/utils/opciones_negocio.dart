@@ -9,10 +9,14 @@ class OpcionesNegocio {
   final bool repisas;
   final bool whatsappEncargos;
 
+  /// Precios distintos: costo, venta y precio para clientes con descuento.
+  final bool clientesDescuento;
+
   const OpcionesNegocio({
     required this.stock,
     required this.repisas,
     required this.whatsappEncargos,
+    required this.clientesDescuento,
   });
 
   static bool tipoPuedeStock(String? categoria) =>
@@ -29,6 +33,7 @@ class OpcionesNegocio {
       stock: conStock,
       repisas: conStock,
       whatsappEncargos: CategoriasNegocio.esImprenta(categoria),
+      clientesDescuento: false,
     );
   }
 
@@ -48,10 +53,14 @@ class OpcionesNegocio {
     final whatsapp = CategoriasNegocio.visibleAlPublico(categoria)
         ? leer('whatsapp_encargos', base.whatsappEncargos)
         : false;
+    final descuento = CategoriasNegocio.visibleAlPublico(categoria)
+        ? leer('clientes_descuento', base.clientesDescuento)
+        : false;
     return OpcionesNegocio(
       stock: stock,
       repisas: repisas,
       whatsappEncargos: whatsapp,
+      clientesDescuento: descuento,
     );
   }
 
@@ -59,12 +68,14 @@ class OpcionesNegocio {
     bool? stock,
     bool? repisas,
     bool? whatsappEncargos,
+    bool? clientesDescuento,
   }) {
     final nuevoStock = stock ?? this.stock;
     return OpcionesNegocio(
       stock: nuevoStock,
       repisas: nuevoStock ? (repisas ?? this.repisas) : false,
       whatsappEncargos: whatsappEncargos ?? this.whatsappEncargos,
+      clientesDescuento: clientesDescuento ?? this.clientesDescuento,
     );
   }
 
@@ -72,6 +83,7 @@ class OpcionesNegocio {
         'stock': stock,
         'repisas': repisas && stock,
         'whatsapp_encargos': whatsappEncargos,
+        'clientes_descuento': clientesDescuento,
       };
 }
 

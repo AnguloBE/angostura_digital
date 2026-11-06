@@ -43,6 +43,19 @@ class CitaCalendarioMes extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxW = constraints.maxWidth;
+        final ancho = !maxW.isFinite || maxW > 420 ? 380.0 : maxW;
+        return Align(
+          alignment: Alignment.topCenter,
+          child: SizedBox(width: ancho, child: _mes()),
+        );
+      },
+    );
+  }
+
+  Widget _mes() {
     final primeroMes = DateTime(mesVisible.year, mesVisible.month, 1);
     final diasEnMes = DateTime(mesVisible.year, mesVisible.month + 1, 0).day;
     // Lunes = 0 en la fila (weekday 1 -> 0)
@@ -87,7 +100,7 @@ class CitaCalendarioMes extends StatelessWidget {
             crossAxisCount: 7,
             mainAxisSpacing: 4,
             crossAxisSpacing: 4,
-            childAspectRatio: 1,
+            mainAxisExtent: 40,
           ),
           itemCount: offset + diasEnMes,
           itemBuilder: (_, index) {

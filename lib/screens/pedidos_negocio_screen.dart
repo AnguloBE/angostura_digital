@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/providers/cart_provider.dart';
+import 'package:angostura_digital/screens/agregar_cita_whatsapp_screen.dart';
 import 'package:angostura_digital/screens/menu_negocio_screen.dart';
 import 'package:angostura_digital/widgets/pedido_producto_linea.dart';
 import 'package:angostura_digital/utils/pedido_ubicacion_utils.dart';
@@ -37,6 +38,26 @@ class PedidosNegocioScreen extends StatelessWidget {
   bool get _puedeVentaEnLocal => CategoriasNegocio.puedeVentaEnLocal(categoria);
   bool get _esBodega => CategoriasNegocio.esBodega(categoria);
   bool get _sinDinero => CategoriasNegocio.sinRegistroDinero(categoria);
+
+  Future<void> _abrirAgregarCita(BuildContext context) async {
+    final ok = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AgregarCitaWhatsappScreen(
+          negocioId: negocioId,
+          nombreNegocio: nombreNegocio,
+        ),
+      ),
+    );
+    if (ok == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cita guardada. Ya ocupa ese horario.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    }
+  }
 
   void _abrirNuevoPedidoMostrador(BuildContext context) {
     context.read<CartProvider>().iniciarPedidoLocal();
@@ -190,15 +211,23 @@ class PedidosNegocioScreen extends StatelessWidget {
             ),
         ],
       ),
-      floatingActionButton: _puedeVentaEnLocal
+      floatingActionButton: _esNegocioServicios
           ? FloatingActionButton.extended(
-              onPressed: () => _abrirNuevoPedidoMostrador(context),
-              backgroundColor: _esBodega ? Colors.brown.shade700 : Colors.indigo,
+              onPressed: () => _abrirAgregarCita(context),
+              backgroundColor: Colors.deepPurple,
               foregroundColor: Colors.white,
-              icon: Icon(CategoriasNegocio.iconoVentaEnLocal(categoria)),
-              label: Text(CategoriasNegocio.etiquetaVentaEnLocal(categoria)),
+              icon: const Icon(Icons.add),
+              label: const Text('Agregar cita'),
             )
-          : null,
+          : _puedeVentaEnLocal
+              ? FloatingActionButton.extended(
+                  onPressed: () => _abrirNuevoPedidoMostrador(context),
+                  backgroundColor: _esBodega ? Colors.brown.shade700 : Colors.indigo,
+                  foregroundColor: Colors.white,
+                  icon: Icon(CategoriasNegocio.iconoVentaEnLocal(categoria)),
+                  label: Text(CategoriasNegocio.etiquetaVentaEnLocal(categoria)),
+                )
+              : null,
       body: Column(
         children: [
           if (_esBodega || _esNegocioServicios)
@@ -213,7 +242,7 @@ class PedidosNegocioScreen extends StatelessWidget {
                   Expanded(
                     child: Text(
                       _esNegocioServicios
-                          ? 'Citas de las últimas 24 horas. Anteriores en Historial y ventas.'
+                          ? 'Citas de hoy y las que vienen. «Agregar cita» sirve en persona o por mensaje.'
                           : _esBodega
                               ? 'Últimas 24 horas. Usa «Sacar producto» para registrar salidas.'
                               : _puedeVentaEnLocal
@@ -239,7 +268,8 @@ class PedidosNegocioScreen extends StatelessWidget {
 
           pedidos = pedidos.where((doc) {
             final data = doc.data() as Map<String, dynamic>;
-            return PedidosHistorialUtils.esPedidoEnVentanaActiva(data);
+            if (PedidosHistorialUtils.esPedidoEnVentanaActiva(data)) return true;
+            return _esNegocioServicios && PedidoServiciosUtils.sigueEnBandeja(data);
           }).toList();
           
           final mostrarEncargos = !_esBodega && !_esNegocioServicios;
@@ -255,8 +285,19 @@ class PedidosNegocioScreen extends StatelessWidget {
             }
           }
           ahora.sort((a, b) {
-            final fechaA = (a.data() as Map<String, dynamic>)['fecha'] as Timestamp?;
-            final fechaB = (b.data() as Map<String, dynamic>)['fecha'] as Timestamp?;
+            final dataA = a.data() as Map<String, dynamic>;
+            final dataB = b.data() as Map<String, dynamic>;
+            if (_esNegocioServicios) {
+              final ia = PedidoServiciosUtils.inicioCita(dataA);
+              final ib = PedidoServiciosUtils.inicioCita(dataB);
+              if (ia != null || ib != null) {
+                if (ia == null) return 1;
+                if (ib == null) return -1;
+                return ia.compareTo(ib);
+              }
+            }
+            final fechaA = dataA['fecha'] as Timestamp?;
+            final fechaB = dataB['fecha'] as Timestamp?;
             if (fechaA == null) return -1;
             if (fechaB == null) return 1;
             return fechaB.compareTo(fechaA);
@@ -289,7 +330,7 @@ class PedidosNegocioScreen extends StatelessWidget {
                       verEncargos
                           ? 'No hay encargos pendientes'
                           : (_esNegocioServicios
-                              ? 'No hay citas en las últimas 24 horas'
+                              ? 'No hay citas próximas'
                               : 'No hay pedidos en las últimas 24 horas'),
                       textAlign: TextAlign.center,
                       style: const TextStyle(
@@ -299,7 +340,9 @@ class PedidosNegocioScreen extends StatelessWidget {
                     Text(
                       verEncargos
                           ? 'Cuando alguien pida para otro día, aparece aquí hasta que lo entregues.'
-                          : 'Si cerraste tarde o buscas pedidos de ayer, revísalos en el historial.',
+                          : (_esNegocioServicios
+                              ? 'Anótala con el botón Agregar cita, ya sea en persona o por mensaje.'
+                              : 'Si cerraste tarde o buscas pedidos de ayer, revísalos en el historial.'),
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
                     ),
@@ -328,7 +371,7 @@ class PedidosNegocioScreen extends StatelessWidget {
           }
 
           return ListView.builder(
-            padding: const EdgeInsets.all(12),
+            padding: EdgeInsets.fromLTRB(12, 12, 12, _esNegocioServicios ? 96 : 12),
             itemCount: lista.length,
             itemBuilder: (context, index) {
               final doc = lista[index];
@@ -364,9 +407,17 @@ class PedidosNegocioScreen extends StatelessWidget {
               // Coordenadas de entrega (GeoPoint, campos planos o pedidos antiguos)
               final coordsEntrega = PedidoUbicacionUtils.resolverEntrega(data);
 
-              final grupo = verEncargos ? EncargoUtils.cuando(data) : null;
-              final grupoAnterior = verEncargos && index > 0
-                  ? EncargoUtils.cuando((lista[index - 1].data() as Map<String, dynamic>))
+              final inicioCita = _esNegocioServicios ? PedidoServiciosUtils.inicioCita(data) : null;
+              final grupo = verEncargos
+                  ? EncargoUtils.cuando(data)
+                  : (inicioCita != null ? PedidoServiciosUtils.grupoDiaCita(inicioCita) : null);
+              final grupoAnterior = index > 0
+                  ? () {
+                      final prev = lista[index - 1].data() as Map<String, dynamic>;
+                      if (verEncargos) return EncargoUtils.cuando(prev);
+                      final prevInicio = _esNegocioServicios ? PedidoServiciosUtils.inicioCita(prev) : null;
+                      return prevInicio != null ? PedidoServiciosUtils.grupoDiaCita(prevInicio) : null;
+                    }()
                   : null;
 
               return Column(
@@ -421,7 +472,7 @@ class PedidosNegocioScreen extends StatelessWidget {
                       if (EncargoUtils.banner(data) != null) EncargoUtils.banner(data)!,
                       
                       if (_esNegocioServicios && metodoEntrega == 'cita')
-                        _buildBloqueCita(data)
+                        _buildBloqueCita(context, data)
                       else if (_esNegocioServicios && metodoEntrega == 'servicio_solicitud')
                         _buildBloqueSolicitudDomicilio(context, data, coordsEntrega)
                       else if (esMostrador)
@@ -532,6 +583,18 @@ class PedidosNegocioScreen extends StatelessWidget {
                       ],
 
                       const Divider(height: 25),
+                      if (data['cliente_con_descuento'] == true)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            'Este pedido se cobró con precio de descuento.',
+                            style: TextStyle(
+                              color: Colors.teal.shade800,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
                       if (data['productos'] != null) ...[
                         Builder(builder: (context) {
                           final esProductos = opciones.stock;
@@ -841,6 +904,13 @@ class PedidosNegocioScreen extends StatelessWidget {
             nombre.isNotEmpty ? 'Cliente: $nombre' : 'Cliente en mostrador (sin nombre)',
             style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87),
           ),
+          if (data['cliente_con_descuento'] == true) ...[
+            const SizedBox(height: 4),
+            Text(
+              'Precio con descuento',
+              style: TextStyle(fontSize: 13, color: Colors.teal.shade800, fontWeight: FontWeight.w700),
+            ),
+          ],
           if (creadoPor.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
@@ -876,8 +946,13 @@ class PedidosNegocioScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildBloqueCita(Map<String, dynamic> data) {
+  Widget _buildBloqueCita(BuildContext context, Map<String, dynamic> data) {
     final resumen = PedidoServiciosUtils.resumenCitaDesdePedido(data);
+    final nombre = (data['cliente_nombre'] ?? '').toString().trim();
+    final telefono = (data['cliente_telefono'] ?? '').toString().trim();
+    final anotada = data['es_cita_manual'] == true ||
+        data['origen_cita'] == 'manual' ||
+        data['origen_cita'] == 'whatsapp';
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
@@ -889,18 +964,42 @@ class PedidosNegocioScreen extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
               Icon(Icons.event_available, color: Colors.deepPurple, size: 20),
-              SizedBox(width: 6),
-              Text('Cita en el local',
-                  style: TextStyle(fontWeight: FontWeight.bold, color: Colors.deepPurple)),
+              const SizedBox(width: 6),
+              Text(anotada ? 'Cita anotada' : 'Cita en el local',
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.deepPurple)),
             ],
           ),
+          if (nombre.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(nombre, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+          ],
           if (resumen.isNotEmpty) ...[
             const SizedBox(height: 6),
             Text(resumen,
                 style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Colors.black87)),
+          ],
+          if (telefono.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(telefono, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.call, color: Colors.blueAccent),
+                  tooltip: 'Llamar',
+                  onPressed: () => _llamarCliente(context, telefono),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.message, color: Colors.teal),
+                  tooltip: 'WhatsApp',
+                  onPressed: () => _abrirWhatsApp(context, telefono),
+                ),
+              ],
+            ),
           ],
         ],
       ),
@@ -964,22 +1063,31 @@ class PedidosNegocioScreen extends StatelessWidget {
 
   Widget _buildEstadoCitas(BuildContext context, String pedidoId, String estadoActual) {
     if (estadoActual == PedidoServiciosUtils.estadoConfirmada) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.green.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.green),
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.check_circle, color: Colors.green, size: 16),
-            SizedBox(width: 6),
-            Text('Confirmada',
-                style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
-          ],
-        ),
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.green.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.green),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.check_circle, color: Colors.green, size: 16),
+                SizedBox(width: 6),
+                Text('Confirmada',
+                    style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold, fontSize: 13)),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: () => _confirmarCancelacion(context, pedidoId),
+            child: const Text('Cancelar cita', style: TextStyle(color: Colors.red, fontSize: 12)),
+          ),
+        ],
       );
     }
     if (estadoActual == PedidoServiciosUtils.estadoCancelado) {

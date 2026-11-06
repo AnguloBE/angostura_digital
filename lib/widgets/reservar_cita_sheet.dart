@@ -11,6 +11,8 @@ class ReservarCitaSheet extends StatefulWidget {
   final String servicioId;
   final String servicioNombre;
   final double precio;
+  final double? precioLista;
+  final bool esPrecioDescuento;
   final String? fotoUrl;
   final int duracionMinutos;
   final Map<String, dynamic>? datosNegocio;
@@ -21,6 +23,8 @@ class ReservarCitaSheet extends StatefulWidget {
     required this.servicioId,
     required this.servicioNombre,
     required this.precio,
+    this.precioLista,
+    this.esPrecioDescuento = false,
     this.fotoUrl,
     this.duracionMinutos = 30,
     this.datosNegocio,
@@ -32,6 +36,8 @@ class ReservarCitaSheet extends StatefulWidget {
     required String servicioId,
     required String servicioNombre,
     required double precio,
+    double? precioLista,
+    bool esPrecioDescuento = false,
     String? fotoUrl,
     int duracionMinutos = 30,
     Map<String, dynamic>? datosNegocio,
@@ -53,6 +59,8 @@ class ReservarCitaSheet extends StatefulWidget {
         servicioId: servicioId,
         servicioNombre: servicioNombre,
         precio: precio,
+        precioLista: precioLista,
+        esPrecioDescuento: esPrecioDescuento,
         fotoUrl: fotoUrl,
         duracionMinutos: duracionMinutos,
         datosNegocio: datosNegocio,
@@ -69,7 +77,7 @@ class _ReservarCitaSheetState extends State<ReservarCitaSheet> {
   late DateTime _mesVisible;
   DateTime? _diaSel;
   DateTime? _horaSel;
-  Set<String> _noDisponibles = {};
+  AgendaCitas _agenda = const AgendaCitas();
   bool _cargandoSlots = true;
   bool _reservando = false;
 
@@ -92,15 +100,13 @@ class _ReservarCitaSheetState extends State<ReservarCitaSheet> {
   }
 
   Future<void> _cargarOcupadas() async {
-    final o = await ServicioCitaUtils.slotsNoDisponibles(
+    final o = await ServicioCitaUtils.cargarAgenda(
       widget.negocioId,
       negocio: widget.datosNegocio,
-      duracionMinutos: widget.duracionMinutos,
-      intervaloMinutos: _intervalo,
     );
     if (mounted) {
       setState(() {
-        _noDisponibles = o;
+        _agenda = o;
         _cargandoSlots = false;
       });
     }
@@ -140,6 +146,8 @@ class _ReservarCitaSheetState extends State<ReservarCitaSheet> {
         servicioId: widget.servicioId,
         servicioNombre: widget.servicioNombre,
         precio: widget.precio,
+        precioLista: widget.precioLista,
+        esPrecioDescuento: widget.esPrecioDescuento,
         citaInicio: hora,
         duracionMinutos: widget.duracionMinutos,
         fotoUrl: widget.fotoUrl,
@@ -205,7 +213,8 @@ class _ReservarCitaSheetState extends State<ReservarCitaSheet> {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'Duración: ${widget.duracionMinutos} min · \$${widget.precio.toStringAsFixed(2)}',
+                        'Duración: ${widget.duracionMinutos} min · \$${widget.precio.toStringAsFixed(2)}'
+                        '${widget.esPrecioDescuento ? ' · precio con descuento' : ''}',
                         style: TextStyle(color: Colors.grey.shade700),
                       ),
                       const SizedBox(height: 4),
@@ -273,16 +282,25 @@ class _ReservarCitaSheetState extends State<ReservarCitaSheet> {
                               spacing: 8,
                               runSpacing: 8,
                               children: horas.map((h) {
-                                final ocupado = ServicioCitaUtils.slotOcupado(
-                                  h,
-                                  _noDisponibles,
-                                  widget.duracionMinutos,
+                                final cupo = ServicioCitaUtils.cupoPorHora(widget.datosNegocio);
+                                final ocupado = ServicioCitaUtils.noSePuedeAgendar(
+                                  slot: h,
+                                  agenda: _agenda,
+                                  duracionMinutos: widget.duracionMinutos,
                                   intervaloMinutos: _intervalo,
+                                  cupo: cupo,
+                                );
+                                final encimadas = ServicioCitaUtils.citasEncimadas(
+                                  h,
+                                  widget.duracionMinutos,
+                                  _agenda.citas,
                                 );
                                 final sel = _horaSel == h;
                                 return FilterChip(
                                   label: Text(
-                                    ServicioCitaUtils.formatearSoloHora(h),
+                                    cupo > 1 && encimadas > 0 && !ocupado
+                                        ? '${ServicioCitaUtils.formatearSoloHora(h)} · $encimadas/$cupo'
+                                        : ServicioCitaUtils.formatearSoloHora(h),
                                   ),
                                   selected: sel,
                                   selectedColor: Colors.deepPurple.shade100,

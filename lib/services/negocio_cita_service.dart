@@ -64,6 +64,7 @@ class NegocioCitaService {
     required List<String> bloqueos,
     int? intervaloMinutos,
     int? diasAdelante,
+    int? cupoPorHora,
   }) async {
     final data = <String, dynamic>{
       'horario_citas': horario,
@@ -74,6 +75,9 @@ class NegocioCitaService {
     }
     if (diasAdelante != null) {
       data['dias_citas_adelante'] = diasAdelante;
+    }
+    if (cupoPorHora != null) {
+      data['cupo_citas_por_hora'] = cupoPorHora;
     }
     await FirebaseFirestore.instance.collection('negocios').doc(negocioId).update(data);
   }

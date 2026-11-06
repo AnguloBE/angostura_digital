@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
 import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
+import 'package:angostura_digital/utils/precio_producto_utils.dart';
 
 /// Detalles de productos y promociones en carrito y pedidos.
 class ProductoPedidoUtils {
@@ -348,9 +349,20 @@ class ProductoPedidoUtils {
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               Text(
-                'Precio en pedido: \$${precio.toStringAsFixed(2)}',
+                item['es_precio_descuento'] == true
+                    ? 'Precio con descuento: \$${precio.toStringAsFixed(2)}'
+                    : 'Precio en pedido: \$${precio.toStringAsFixed(2)}',
                 style: TextStyle(color: Colors.grey.shade700),
               ),
+              if (item['es_precio_descuento'] == true && item['precio_lista'] is num)
+                Text(
+                  'Precio de venta: \$${(item['precio_lista'] as num).toStringAsFixed(2)}',
+                  style: TextStyle(
+                    color: Colors.grey.shade600,
+                    decoration: TextDecoration.lineThrough,
+                    fontSize: 13,
+                  ),
+                ),
               const SizedBox(height: 12),
               if (ubicacion != null && ubicacion.isNotEmpty) ...[
                 Container(
@@ -453,7 +465,9 @@ class ProductoPedidoUtils {
   }) async {
     final esServicio = data['es_servicio'] == true;
     final nombre = data['nombre']?.toString() ?? (esServicio ? 'Servicio' : 'Producto');
-    final precio = (data['precio'] as num?)?.toDouble() ?? 0;
+    final precio = PrecioProducto.venta(data);
+    final costo = PrecioProducto.costo(data);
+    final desc = PrecioProducto.descuento(data);
     final fotoUrl = data['foto_url']?.toString();
 
     final detalles = detallesDesdeFirestore(data);
@@ -501,10 +515,22 @@ class ProductoPedidoUtils {
                 ),
               ),
               const SizedBox(height: 14),
+              if (costo > 0)
+                Text(
+                  'Costo: \$${costo.toStringAsFixed(2)}',
+                  style: TextStyle(color: Colors.blueGrey.shade700, fontSize: 14),
+                ),
               Text(
-                'Precio: \$${precio.toStringAsFixed(2)}',
+                (costo > 0 || desc > 0)
+                    ? 'Precio de venta: \$${precio.toStringAsFixed(2)}'
+                    : 'Precio: \$${precio.toStringAsFixed(2)}',
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
+              if (desc > 0)
+                Text(
+                  'Precio con descuento: \$${desc.toStringAsFixed(2)}',
+                  style: TextStyle(color: Colors.teal.shade800, fontWeight: FontWeight.w700),
+                ),
               const SizedBox(height: 12),
               if (filas.isEmpty)
                 Text(

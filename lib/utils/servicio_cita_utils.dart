@@ -7,6 +7,7 @@ class ServicioCitaUtils {
 
   static const int diasAdelanteDefault = 60;
   static const int intervaloMinutosDefault = 30;
+  static const int cupoPorHoraDefault = 1;
 
   static int intervaloDesdeNegocio(Map<String, dynamic>? negocio) {
     final v = negocio?['intervalo_citas_minutos'];
@@ -19,6 +20,15 @@ class ServicioCitaUtils {
     if (v is num && v > 0) return v.toInt();
     return diasAdelanteDefault;
   }
+
+  /// Cuántas citas pueden coincidir en la misma hora. 1 = esa hora queda ocupada.
+  static int cupoPorHora(Map<String, dynamic>? negocio) {
+    final v = negocio?['cupo_citas_por_hora'];
+    if (v is num && v >= 1) return v.toInt().clamp(1, 20);
+    return cupoPorHoraDefault;
+  }
+
+  static bool yaPaso(DateTime slot) => !slot.isAfter(DateTime.now());
 
   static Map<String, dynamic> horarioParaCitas(Map<String, dynamic>? negocio) {
     final citas = NegocioCitaService.horarioCitas(negocio);
@@ -88,7 +98,7 @@ class ServicioCitaUtils {
 
     for (var m = abre; m + duracionMinutos <= cierra; m += intervaloMinutos) {
       final slot = DateTime(dia.year, dia.month, dia.day, m ~/ 60, m % 60);
-      if (!soloFuturas || slot.isAfter(ahora.subtract(const Duration(minutes: 1)))) {
+      if (!soloFuturas || slot.isAfter(ahora)) {
         slots.add(slot);
       }
     }
@@ -144,73 +154,145 @@ class ServicioCitaUtils {
     return NegocioCitaService.bloqueosManuales(negocio).toSet();
   }
 
-  /// Citas de clientes + horas bloqueadas por el dueño.
-  static Future<Set<String>> slotsNoDisponibles(
-    String negocioId, {
-    Map<String, dynamic>? negocio,
-    int duracionMinutos = 30,
-    int intervaloMinutos = intervaloMinutosDefault,
-  }) async {
-    final claves = <String>{...bloqueosManualesClaves(negocio)};
-
-    final desde = DateTime.now().subtract(const Duration(days: 1));
-    try {
-      final snap = await FirebaseFirestore.instance
-          .collection('pedidos')
-          .where('negocio_id', isEqualTo: negocioId)
-          .where('fecha', isGreaterThan: Timestamp.fromDate(desde))
-          .get();
-
-      for (final doc in snap.docs) {
-        final data = doc.data();
-        if (data['estado'] == 'Cancelado') continue;
-        final productos = data['productos'] as List? ?? [];
-        for (final p in productos) {
-          if (p is! Map) continue;
-          final inicio = parseCitaInicio(p['cita_inicio']);
-          if (inicio == null) continue;
-          final dur = (p['duracion_minutos'] as num?)?.toInt() ?? duracionMinutos;
-          for (var m = 0; m < dur; m += intervaloMinutos) {
-            claves.add(claveSlot(inicio.add(Duration(minutes: m))));
-          }
-        }
-      }
-    } catch (_) {}
-
-    return claves;
+  static DateTime? inicioDePedido(Map<String, dynamic> data) {
+    final directa = parseCitaInicio(data['cita_inicio']);
+    if (directa != null) return directa;
+    final productos = data['productos'] as List? ?? [];
+    for (final p in productos) {
+      if (p is! Map) continue;
+      final inicio = parseCitaInicio(p['cita_inicio']);
+      if (inicio != null) return inicio;
+    }
+    return null;
   }
 
-  static bool slotOcupado(
+  static int duracionDePedido(Map<String, dynamic> data, {int fallback = 30}) {
+    final directa = data['duracion_minutos'];
+    if (directa is num && directa > 0) return directa.toInt();
+    final productos = data['productos'] as List? ?? [];
+    for (final p in productos) {
+      if (p is! Map) continue;
+      final d = (p['duracion_minutos'] as num?)?.toInt();
+      if (d != null && d > 0) return d;
+    }
+    return fallback;
+  }
+
+  /// Citas reales del negocio. Una consulta solo por negocio, sin índice extra.
+  static Future<List<CitaAgendada>> citasDelNegocio(String negocioId) async {
+    final snap = await FirebaseFirestore.instance
+        .collection('pedidos')
+        .where('negocio_id', isEqualTo: negocioId)
+        .get();
+    final ahora = DateTime.now();
+    final lista = <CitaAgendada>[];
+    for (final doc in snap.docs) {
+      final data = doc.data();
+      if ((data['estado'] ?? '').toString() == 'Cancelado') continue;
+      final inicio = inicioDePedido(data);
+      if (inicio == null) continue;
+      final fin = inicio.add(Duration(minutes: duracionDePedido(data)));
+      if (fin.isBefore(ahora.subtract(const Duration(hours: 12)))) continue;
+      lista.add(CitaAgendada(inicio: inicio, fin: fin));
+    }
+    return lista;
+  }
+
+  static Future<AgendaCitas> cargarAgenda(
+    String negocioId, {
+    Map<String, dynamic>? negocio,
+  }) async {
+    final citas = await citasDelNegocio(negocioId);
+    return AgendaCitas(
+      citas: citas,
+      bloqueos: bloqueosManualesClaves(negocio),
+    );
+  }
+
+  static int citasEncimadas(DateTime slot, int duracionMinutos, List<CitaAgendada> citas) {
+    final fin = slot.add(Duration(minutes: duracionMinutos));
+    var n = 0;
+    for (final c in citas) {
+      if (slot.isBefore(c.fin) && c.inicio.isBefore(fin)) n++;
+    }
+    return n;
+  }
+
+  static bool bloqueoManualCubre(
     DateTime slot,
-    Set<String> noDisponibles,
-    int duracionMinutos, {
+    int duracionMinutos,
+    Set<String> bloqueos, {
     int intervaloMinutos = intervaloMinutosDefault,
   }) {
-    for (var m = 0; m < duracionMinutos; m += intervaloMinutos) {
-      if (noDisponibles.contains(claveSlot(slot.add(Duration(minutes: m))))) {
-        return true;
-      }
+    final fin = slot.add(Duration(minutes: duracionMinutos));
+    for (final clave in bloqueos) {
+      final inicio = DateTime.tryParse(clave);
+      if (inicio == null) continue;
+      final finBloqueo = inicio.add(Duration(minutes: intervaloMinutos));
+      if (slot.isBefore(finBloqueo) && inicio.isBefore(fin)) return true;
     }
     return false;
   }
 
-  static List<DateTime> horariosLibresDelDia(
-    DateTime dia,
-    Map<String, dynamic>? negocio,
-    Set<String> noDisponibles, {
-    int duracionMinutos = 30,
-    int intervaloMinutos = intervaloMinutosDefault,
+  /// Hora pasada, bloqueada o con el cupo de esa hora ya lleno.
+  static bool noSePuedeAgendar({
+    required DateTime slot,
+    required AgendaCitas agenda,
+    required int duracionMinutos,
+    required int intervaloMinutos,
+    required int cupo,
   }) {
-    final horario = horarioParaCitas(negocio);
-    final todos = horariosDelDia(
-      dia,
-      horario,
-      duracionMinutos: duracionMinutos,
+    if (yaPaso(slot)) return true;
+    if (bloqueoManualCubre(
+      slot,
+      duracionMinutos,
+      agenda.bloqueos,
       intervaloMinutos: intervaloMinutos,
-    );
-    return todos
-        .where((s) => !slotOcupado(s, noDisponibles, duracionMinutos,
-            intervaloMinutos: intervaloMinutos))
-        .toList();
+    )) {
+      return true;
+    }
+    return citasEncimadas(slot, duracionMinutos, agenda.citas) >= cupo;
   }
+
+  static String motivoNoDisponible({
+    required DateTime slot,
+    required AgendaCitas agenda,
+    required int duracionMinutos,
+    required int intervaloMinutos,
+    required int cupo,
+  }) {
+    if (yaPaso(slot)) return 'Esa hora ya pasó. Elige una más tarde.';
+    if (bloqueoManualCubre(
+      slot,
+      duracionMinutos,
+      agenda.bloqueos,
+      intervaloMinutos: intervaloMinutos,
+    )) {
+      return 'Esa hora está bloqueada. Elige otra.';
+    }
+    final n = citasEncimadas(slot, duracionMinutos, agenda.citas);
+    if (n >= cupo) {
+      return cupo <= 1
+          ? 'Esa hora ya tiene una cita. Elige otra.'
+          : 'Esa hora ya tiene $n citas (cupo $cupo). Elige otra.';
+    }
+    return 'Esa hora no está disponible.';
+  }
+}
+
+class CitaAgendada {
+  final DateTime inicio;
+  final DateTime fin;
+
+  const CitaAgendada({required this.inicio, required this.fin});
+}
+
+class AgendaCitas {
+  final List<CitaAgendada> citas;
+  final Set<String> bloqueos;
+
+  const AgendaCitas({
+    this.citas = const [],
+    this.bloqueos = const {},
+  });
 }

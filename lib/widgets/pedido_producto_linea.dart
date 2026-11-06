@@ -144,6 +144,15 @@ class PedidoProductoLinea extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (item['es_precio_descuento'] == true)
+                  Text(
+                    'Con descuento',
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.teal.shade700,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 Text(
                   '\$${(precio * (cantidad as num)).toStringAsFixed(2)}',
                   style: const TextStyle(color: Colors.black54),

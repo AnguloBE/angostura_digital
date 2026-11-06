@@ -25,9 +25,10 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
   late TabController _tabs;
   Map<String, dynamic> _horario = NegocioCitaService.horarioCitasPorDefecto();
   List<String> _bloqueos = [];
-  Set<String> _ocupadasPedidos = {};
+  List<CitaAgendada> _citas = [];
   int _intervalo = ServicioCitaUtils.intervaloMinutosDefault;
   int _diasAdelante = ServicioCitaUtils.diasAdelanteDefault;
+  int _cupo = ServicioCitaUtils.cupoPorHoraDefault;
   bool _cambiosLocales = false;
   bool _guardando = false;
   bool _cargandoDoc = true;
@@ -63,15 +64,9 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
   }
 
   Future<void> _cargarOcupadasPedidos() async {
-    final o = await ServicioCitaUtils.slotsNoDisponibles(
-      widget.negocioId,
-      negocio: {'citas_bloqueadas': _bloqueos},
-    );
+    final citas = await ServicioCitaUtils.citasDelNegocio(widget.negocioId);
     if (!mounted) return;
-    final manual = _bloqueos.toSet();
-    setState(() {
-      _ocupadasPedidos = o.difference(manual);
-    });
+    setState(() => _citas = citas);
   }
 
   void _aplicarDatosNegocio(Map<String, dynamic>? data) {
@@ -82,6 +77,7 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
     _bloqueos = List<String>.from(NegocioCitaService.bloqueosManuales(data));
     _intervalo = ServicioCitaUtils.intervaloDesdeNegocio(data);
     _diasAdelante = ServicioCitaUtils.diasAdelanteDesdeNegocio(data);
+    _cupo = ServicioCitaUtils.cupoPorHora(data);
   }
 
   Map<String, dynamic> get _negocioSnapshot => {
@@ -89,6 +85,7 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
         'citas_bloqueadas': _bloqueos,
         'intervalo_citas_minutos': _intervalo,
         'dias_citas_adelante': _diasAdelante,
+        'cupo_citas_por_hora': _cupo,
       };
 
   Future<void> _guardarTodo() async {
@@ -100,6 +97,7 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
         bloqueos: _bloqueos,
         intervaloMinutos: _intervalo,
         diasAdelante: _diasAdelante,
+        cupoPorHora: _cupo,
       );
       _cambiosLocales = false;
       if (mounted) {
@@ -124,10 +122,11 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
 
   void _toggleBloqueo(DateTime slot) {
     final clave = ServicioCitaUtils.claveSlot(slot);
-    if (_ocupadasPedidos.contains(clave)) {
+    if (ServicioCitaUtils.yaPaso(slot)) return;
+    if (ServicioCitaUtils.citasEncimadas(slot, _intervalo, _citas) > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Esta hora ya tiene una cita de un cliente'),
+          content: Text('Esta hora ya tiene una cita. No se puede liberar desde aquí.'),
         ),
       );
       return;
@@ -267,18 +266,18 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
       padding: const EdgeInsets.all(16),
       children: [
         Text(
-          'Toca una hora para marcarla como ocupada o liberarla. '
-          'Las citas de clientes aparecen en rojo y no se pueden quitar desde aquí.',
+          'Toca una hora para cerrarla o abrirla. Si ya hay una cita, o la hora ya pasó, no se puede agendar ahí.',
           style: TextStyle(color: Colors.grey.shade700, fontSize: 13),
         ),
         const SizedBox(height: 8),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             _leyenda(Colors.green.shade100, 'Disponible'),
-            const SizedBox(width: 8),
-            _leyenda(Colors.orange.shade100, 'Bloqueada por ti'),
-            const SizedBox(width: 8),
-            _leyenda(Colors.red.shade100, 'Cita de cliente'),
+            _leyenda(Colors.orange.shade100, 'Bloqueada'),
+            _leyenda(Colors.red.shade100, 'Con cita'),
+            _leyenda(Colors.grey.shade300, 'Ya pasó'),
           ],
         ),
         const SizedBox(height: 12),
@@ -320,11 +319,16 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
             runSpacing: 8,
             children: slots.map((slot) {
               final clave = ServicioCitaUtils.claveSlot(slot);
-              final esCliente = _ocupadasPedidos.contains(clave);
+              final paso = ServicioCitaUtils.yaPaso(slot);
+              final encimadas = ServicioCitaUtils.citasEncimadas(slot, _intervalo, _citas);
+              final llena = encimadas >= _cupo;
               final esManual = bloqueosSet.contains(clave);
               Color fondo;
               Color borde;
-              if (esCliente) {
+              if (paso) {
+                fondo = Colors.grey.shade200;
+                borde = Colors.grey.shade400;
+              } else if (llena) {
                 fondo = Colors.red.shade50;
                 borde = Colors.red.shade300;
               } else if (esManual) {
@@ -334,12 +338,15 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
                 fondo = Colors.green.shade50;
                 borde = Colors.green.shade400;
               }
+              final etiqueta = encimadas > 0 && _cupo > 1
+                  ? '${ServicioCitaUtils.formatearSoloHora(slot)}  $encimadas/$_cupo'
+                  : ServicioCitaUtils.formatearSoloHora(slot);
               return Material(
                 color: fondo,
                 borderRadius: BorderRadius.circular(8),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(8),
-                  onTap: esCliente ? null : () => _toggleBloqueo(slot),
+                  onTap: paso || llena ? null : () => _toggleBloqueo(slot),
                   child: Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -348,12 +355,11 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
                       border: Border.all(color: borde),
                     ),
                     child: Text(
-                      ServicioCitaUtils.formatearSoloHora(slot),
+                      etiqueta,
                       style: TextStyle(
                         fontWeight: FontWeight.w600,
-                        decoration:
-                            esCliente ? TextDecoration.lineThrough : null,
-                        color: esCliente ? Colors.grey : null,
+                        decoration: paso || llena ? TextDecoration.lineThrough : null,
+                        color: paso || llena ? Colors.grey : null,
                       ),
                     ),
                   ),
@@ -366,18 +372,16 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
   }
 
   Widget _leyenda(Color color, String texto) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Text(
-          texto,
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600),
-        ),
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        texto,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
       ),
     );
   }
@@ -474,6 +478,28 @@ class _HorarioCitasNegocioScreenState extends State<HorarioCitasNegocioScreen>
                           ),
                         ),
                       ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    child: DropdownButtonFormField<int>(
+                      value: _cupo,
+                      decoration: const InputDecoration(
+                        labelText: 'Citas por hora',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                        helperText: 'Con 1, si ya hay alguien a esa hora no se puede agendar otra.',
+                      ),
+                      items: const [1, 2, 3, 4, 5, 6, 8, 10]
+                          .map((n) => DropdownMenuItem(value: n, child: Text(n == 1 ? '1 cita' : '$n citas')))
+                          .toList(),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setState(() {
+                          _cupo = v;
+                          _cambiosLocales = true;
+                        });
+                      },
                     ),
                   ),
                   Expanded(child: _buildHorarioSemanal()),

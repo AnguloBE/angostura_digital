@@ -110,7 +110,7 @@ class CategoriasNegocio {
       return 'Toma un pedido de mesa o para llevar, directo en el local.';
     }
     if (esServicios(categoria)) {
-      return 'Revisa citas y solicitudes a domicilio de las últimas horas.';
+      return 'Revisa las citas de hoy y las que vienen. También puedes anotar una en persona o por mensaje.';
     }
     return 'Cobra una venta en el local y descuenta existencias.';
   }

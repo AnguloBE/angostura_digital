@@ -72,6 +72,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                   await FirebaseFirestore.instance.collection('usuarios').doc(doc.id).update({
                     'nombre': nuevoNombre,
                     'rol': rolSeleccionado,
+                    'nombre_elegido': true,
                   });
                   if (dialogContext.mounted) {
                     Navigator.pop(dialogContext); // Cerramos el diálogo

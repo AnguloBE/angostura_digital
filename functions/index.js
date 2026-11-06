@@ -379,6 +379,30 @@ async function sincronizarAccesoUsuarioDesdeEquipo(negocioId, uid, equipoData, n
   }, {merge: true});
 }
 
+exports.onNegocioActualizado = onDocumentUpdated(
+    "negocios/{negocioId}",
+    async (event) => {
+      const antes = event.data.before.data() || {};
+      const despues = event.data.after.data() || {};
+      const cambio = ["nombre", "categoria", "estado", "foto_url"]
+          .some((campo) => antes[campo] !== despues[campo]);
+      if (!cambio) return;
+
+      const negocioId = event.params.negocioId;
+      try {
+        const equipo = await db.collection("negocios").doc(negocioId).collection("equipo").get();
+        await Promise.all(equipo.docs.map((doc) => sincronizarAccesoUsuarioDesdeEquipo(
+            negocioId,
+            doc.id,
+            doc.data(),
+            despues,
+        )));
+      } catch (error) {
+        console.error("Error sincronizando accesos del negocio:", error.message);
+      }
+    },
+);
+
 exports.onEquipoMiembroCambiado = onDocumentWritten(
     "negocios/{negocioId}/equipo/{uid}",
     async (event) => {

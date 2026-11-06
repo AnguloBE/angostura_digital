@@ -7,6 +7,8 @@ import 'package:angostura_digital/utils/mobile_image_utils.dart';
 import 'package:angostura_digital/widgets/square_image.dart';
 import 'package:angostura_digital/widgets/selector_seccion.dart';
 import 'package:angostura_digital/utils/seccion_producto_utils.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
+import 'package:angostura_digital/utils/precio_producto_utils.dart';
 
 /// Alta/edición de un servicio (cita con calendario o solicitud a domicilio).
 class AgregarServicioScreen extends StatefulWidget {
@@ -31,6 +33,8 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
 
   late TextEditingController _nombreCtrl;
   late TextEditingController _precioCtrl;
+  late TextEditingController _costoCtrl;
+  late TextEditingController _descuentoCtrl;
   late TextEditingController _descCtrl;
   late TextEditingController _duracionCtrl;
 
@@ -41,6 +45,7 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
   String _tipoServicio = 'cita';
   bool _destacado = false;
   String _seccion = '';
+  bool _clientesDescuento = false;
 
   @override
   void initState() {
@@ -48,6 +53,8 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
     final d = widget.servicioData;
     _nombreCtrl = TextEditingController(text: d?['nombre'] ?? '');
     _precioCtrl = TextEditingController(text: d?['precio']?.toString() ?? '');
+    _costoCtrl = TextEditingController(text: PrecioProducto.campo(d?['costo']));
+    _descuentoCtrl = TextEditingController(text: PrecioProducto.campo(d?['precio_descuento']));
     _descCtrl = TextEditingController(text: d?['descripcion'] ?? '');
     _duracionCtrl = TextEditingController(
       text: (d?['duracion_minutos'] ?? 30).toString(),
@@ -56,12 +63,24 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
     _tipoServicio = d?['tipo_servicio']?.toString() ?? 'cita';
     _destacado = d?['destacado'] == true;
     _seccion = d == null ? '' : seccionProducto(d);
+    _cargarOpciones();
+  }
+
+  Future<void> _cargarOpciones() async {
+    try {
+      final doc = await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).get();
+      if (!mounted) return;
+      final op = OpcionesNegocio.desde(doc.data()?['categoria']?.toString(), doc.data());
+      setState(() => _clientesDescuento = op.clientesDescuento);
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     _nombreCtrl.dispose();
     _precioCtrl.dispose();
+    _costoCtrl.dispose();
+    _descuentoCtrl.dispose();
     _descCtrl.dispose();
     _duracionCtrl.dispose();
     super.dispose();
@@ -95,6 +114,7 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
         'negocio_id': widget.negocioId,
         'nombre': _nombreCtrl.text.trim(),
         'precio': double.tryParse(_precioCtrl.text.trim()) ?? 0,
+        ..._preciosEspeciales(),
         'descripcion': _descCtrl.text.trim(),
         'foto_url': foto ?? '',
         'es_servicio': true,
@@ -132,6 +152,34 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
     }
   }
 
+  Map<String, dynamic> _preciosEspeciales() {
+    if (!_clientesDescuento) return const {};
+    final datos = <String, dynamic>{};
+    final costo = double.tryParse(_costoCtrl.text.trim());
+    final desc = double.tryParse(_descuentoCtrl.text.trim());
+    if (costo != null && costo > 0) {
+      datos['costo'] = costo;
+    } else if (widget.servicioId != null) {
+      datos['costo'] = FieldValue.delete();
+    }
+    if (desc != null && desc > 0) {
+      datos['precio_descuento'] = desc;
+    } else if (widget.servicioId != null) {
+      datos['precio_descuento'] = FieldValue.delete();
+    }
+    return datos;
+  }
+
+  String? _validarDescuento(String? val) {
+    final t = (val ?? '').trim();
+    if (t.isEmpty) return null;
+    final n = double.tryParse(t);
+    if (n == null || n <= 0) return 'Precio inválido';
+    final venta = double.tryParse(_precioCtrl.text.trim()) ?? 0;
+    if (venta > 0 && n > venta) return 'Debe ser menor o igual al de venta';
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -164,12 +212,33 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
                   (v ?? '').trim().isEmpty ? 'Escribe el nombre' : null,
             ),
             const SizedBox(height: 12),
+            if (_clientesDescuento) ...[
+              TextFormField(
+                controller: _costoCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Costo (\$)',
+                  helperText: 'Lo que te cuesta. El cliente no lo ve.',
+                  border: OutlineInputBorder(),
+                  prefixText: '\$ ',
+                ),
+                validator: (v) {
+                  final t = (v ?? '').trim();
+                  if (t.isEmpty) return null;
+                  final n = double.tryParse(t);
+                  if (n == null || n < 0) return 'Costo inválido';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
             TextFormField(
               controller: _precioCtrl,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Precio (\$)',
-                border: OutlineInputBorder(),
+              decoration: InputDecoration(
+                labelText: _clientesDescuento ? 'Precio de venta (\$)' : 'Precio (\$)',
+                helperText: _clientesDescuento ? 'Lo que paga un cliente normal.' : null,
+                border: const OutlineInputBorder(),
                 prefixText: '\$ ',
               ),
               validator: (v) =>
@@ -177,6 +246,20 @@ class _AgregarServicioScreenState extends State<AgregarServicioScreen> {
                       ? 'Precio inválido'
                       : null,
             ),
+            if (_clientesDescuento) ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _descuentoCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'Precio con descuento (\$)',
+                  helperText: 'Lo que paga un cliente con descuento. Vacío si no aplica.',
+                  border: OutlineInputBorder(),
+                  prefixText: '\$ ',
+                ),
+                validator: _validarDescuento,
+              ),
+            ],
             const SizedBox(height: 12),
             TextFormField(
               controller: _descCtrl,
