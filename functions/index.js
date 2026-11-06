@@ -380,7 +380,10 @@ async function sincronizarAccesoUsuarioDesdeEquipo(negocioId, uid, equipoData, n
 }
 
 exports.onNegocioActualizado = onDocumentUpdated(
-    "negocios/{negocioId}",
+    {
+      document: "negocios/{negocioId}",
+      region: "us-central1",
+    },
     async (event) => {
       const antes = event.data.before.data() || {};
       const despues = event.data.after.data() || {};
