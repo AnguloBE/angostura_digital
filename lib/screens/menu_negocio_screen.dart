@@ -55,6 +55,7 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
   bool _soyClienteDescuento = false;
   bool _rolPrecioListo = false;
   bool _cobrarDescuentoMostrador = false;
+  bool _datosLocalAbiertos = false;
 
   bool get _esBodega => CategoriasNegocio.esBodega(widget.categoriaNegocio);
 
@@ -142,10 +143,6 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
     return '$h:$m $ampm';
   }
 
-  String _textoUltimoTiempoEstimado(Map<String, dynamic> dataNegocio) {
-    return textoUltimoTiempoNegocio(dataNegocio) ?? '';
-  }
-
   Future<void> _abrirMapaGoogle(GeoPoint geo, BuildContext context) async {
     final url = Uri.parse('https://www.google.com/maps/search/?api=1&query=${geo.latitude},${geo.longitude}');
     try {
@@ -175,6 +172,275 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
     if (await canLaunchUrl(uri)) {
       await launchUrl(uri, mode: LaunchMode.externalApplication);
     }
+  }
+
+  Widget _botonContacto({
+    required IconData icono,
+    required String texto,
+    required Color color,
+    required Color fondo,
+    required VoidCallback onTap,
+    required bool anchoCompleto,
+  }) {
+    return Material(
+      color: fondo,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: anchoCompleto ? MainAxisSize.max : MainAxisSize.min,
+            children: [
+              Icon(icono, size: 18, color: color),
+              const SizedBox(width: 6),
+              if (anchoCompleto)
+                Flexible(
+                  child: Text(
+                    texto,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 200),
+                  child: Text(
+                    texto,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pastillaEstado({
+    required bool isAbierto,
+    required String texto,
+    required double maxWidth,
+  }) {
+    final color = isAbierto ? Colors.green.shade800 : Colors.red.shade800;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isAbierto ? Colors.green.shade50 : Colors.red.shade50,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: isAbierto ? Colors.green.shade200 : Colors.red.shade200),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                texto,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// El nombre queda en la barra. Debajo: estado, llamada, WhatsApp y el buscador.
+  Widget _encabezadoPublico({
+    required bool isAbierto,
+    required String? estadoCierre,
+    required String ubicacion,
+    required GeoPoint? ubicacionGeo,
+    required String descripcion,
+    required String telefono,
+    required String? tiempoCorto,
+  }) {
+    final estadoTxt = isAbierto ? 'Abierto' : (estadoCierre ?? 'Cerrado');
+    final descripcionLarga = descripcion.length > 70;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final enFila = constraints.maxWidth >= 640;
+        final llamar = telefono.isEmpty
+            ? null
+            : _botonContacto(
+                icono: Icons.call,
+                texto: telefono,
+                color: Colors.blueGrey.shade800,
+                fondo: Colors.grey.shade100,
+                anchoCompleto: !enFila,
+                onTap: () => _contactarNegocio(telefono, whatsapp: false),
+              );
+        final whatsapp = telefono.isEmpty
+            ? null
+            : _botonContacto(
+                icono: Icons.chat,
+                texto: 'WhatsApp',
+                color: Colors.green.shade800,
+                fondo: Colors.green.shade50,
+                anchoCompleto: !enFila,
+                onTap: () => _contactarNegocio(telefono, whatsapp: true),
+              );
+        final estado = _pastillaEstado(
+          isAbierto: isAbierto,
+          texto: estadoTxt,
+          maxWidth: enFila ? constraints.maxWidth * 0.4 : constraints.maxWidth,
+        );
+        final mapa = ubicacionGeo == null || ubicacion.isNotEmpty
+            ? null
+            : _botonContacto(
+                icono: Icons.map_outlined,
+                texto: 'Mapa',
+                color: Colors.blue.shade800,
+                fondo: Colors.blue.shade50,
+                anchoCompleto: false,
+                onTap: () => _abrirMapaGoogle(ubicacionGeo, context),
+              );
+        final tiempo = tiempoCorto == null || tiempoCorto.isEmpty
+            ? null
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.timer_outlined, size: 15, color: Colors.blue.shade700),
+                  const SizedBox(width: 3),
+                  Text(
+                    tiempoCorto,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Colors.blue.shade800,
+                    ),
+                  ),
+                ],
+              );
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (enFila)
+                Row(
+                  children: [
+                    Flexible(child: Align(alignment: Alignment.centerLeft, child: estado)),
+                    if (tiempo != null) ...[
+                      const SizedBox(width: 8),
+                      tiempo,
+                    ],
+                    const Spacer(),
+                    if (llamar != null) llamar,
+                    if (whatsapp != null) ...[
+                      const SizedBox(width: 6),
+                      whatsapp,
+                    ],
+                    if (mapa != null) ...[
+                      const SizedBox(width: 6),
+                      mapa,
+                    ],
+                  ],
+                )
+              else ...[
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    estado,
+                    if (tiempo != null) tiempo,
+                    if (mapa != null) mapa,
+                  ],
+                ),
+                if (llamar != null && whatsapp != null) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Expanded(child: llamar),
+                      const SizedBox(width: 8),
+                      Expanded(child: whatsapp),
+                    ],
+                  ),
+                ],
+              ],
+              if (ubicacion.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Icon(Icons.location_on, size: 16, color: Colors.red.shade400),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: ubicacionGeo == null
+                            ? null
+                            : () => _abrirMapaGoogle(ubicacionGeo, context),
+                        child: Text(
+                          ubicacion,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                      ),
+                    ),
+                    if (ubicacionGeo != null)
+                      TextButton(
+                        onPressed: () => _abrirMapaGoogle(ubicacionGeo, context),
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('Mapa'),
+                      ),
+                  ],
+                ),
+              ],
+              if (descripcion.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Text(
+                  descripcion,
+                  maxLines: _datosLocalAbiertos ? 8 : (descripcionLarga ? 1 : 2),
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 13, height: 1.3, color: Colors.grey.shade800),
+                ),
+                if (descripcionLarga)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () => setState(() => _datosLocalAbiertos = !_datosLocalAbiertos),
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 0, vertical: 2),
+                        minimumSize: Size.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: Text(_datosLocalAbiertos ? 'Ocultar' : 'Ver descripción'),
+                    ),
+                  ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
   }
 
   Widget _badgeStock(String texto, Color color) {
@@ -343,10 +609,6 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
               !_esBodega &&
               (widget.modoTrabajador ? _cobrarDescuentoMostrador : _soyClienteDescuento);
 
-          String mensajeTiempo = ''; Color colorTiempo = Colors.grey;
-          if (!isAbierto) { mensajeTiempo = '🔴 $estadoCierre'; colorTiempo = Colors.red; } 
-          else { mensajeTiempo = '🟢 ABIERTO AHORA • Listos para tu pedido'; colorTiempo = Colors.green; }
-
           return Column(
             children: [
               if (widget.modoTrabajador)
@@ -376,12 +638,6 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                       ),
                     ],
                   ),
-                )
-              else
-                Container(
-                  width: double.infinity, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(color: !isAbierto ? Colors.red.shade50 : Colors.green.shade50, border: Border(bottom: BorderSide(color: Colors.grey.shade300)), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 4, offset: const Offset(0, 2))]),
-                  child: Row(children: [Icon(!isAbierto ? Icons.lock_clock : Icons.store_mall_directory, color: colorTiempo, size: 20), const SizedBox(width: 8), Expanded(child: Text(mensajeTiempo.toUpperCase(), style: TextStyle(color: colorTiempo, fontWeight: FontWeight.bold, fontSize: 13)))]),
                 ),
 
               if (widget.modoTrabajador && opcionesNegocio.clientesDescuento && !_esBodega)
@@ -417,111 +673,19 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                   ),
                 ),
               
-              if (!widget.modoTrabajador && (ubicacion.isNotEmpty || ubicacionGeo != null))
-                Container(
-                  width: double.infinity, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(color: Colors.grey.shade50, border: Border(bottom: BorderSide(color: Colors.grey.shade300))),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (ubicacion.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 4), 
-                          child: Row(
-                            children: [
-                              Icon(Icons.location_on, color: Colors.red.shade400, size: 18), 
-                              const SizedBox(width: 6), 
-                              Expanded(child: Text(ubicacion, style: TextStyle(color: Colors.grey.shade900, fontWeight: FontWeight.bold, fontSize: 14))),
-                              
-                              // --- BOTÓN DE MAPA AL LADO DEL NOMBRE DE UBICACIÓN ---
-                              if (ubicacionGeo != null)
-                                TextButton.icon(
-                                  icon: const Icon(Icons.map, size: 16, color: Colors.blueAccent),
-                                  label: const Text('Ver mapa', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent)),
-                                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-                                  onPressed: () => _abrirMapaGoogle(ubicacionGeo, context),
-                                )
-                            ]
-                          )
-                        ),
-                      if (_textoUltimoTiempoEstimado(dataNegocio).isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Icon(Icons.timer_outlined, color: Colors.blue.shade700, size: 18),
-                            const SizedBox(width: 6),
-                            Expanded(
-                              child: Text(
-                                _textoUltimoTiempoEstimado(dataNegocio),
-                                style: TextStyle(color: Colors.blue.shade900, fontSize: 13, fontWeight: FontWeight.w600),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-
-              if (!widget.modoTrabajador &&
-                  (descripcionNegocio.isNotEmpty || telefonoNegocio.isNotEmpty))
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (descripcionNegocio.isNotEmpty)
-                        Text(
-                          descripcionNegocio,
-                          style: TextStyle(fontSize: 14, height: 1.35, color: Colors.grey.shade800),
-                        ),
-                      if (telefonoNegocio.isNotEmpty) ...[
-                        if (descripcionNegocio.isNotEmpty) const SizedBox(height: 8),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            ActionChip(
-                              avatar: const Icon(Icons.call, size: 18),
-                              label: Text(telefonoNegocio),
-                              onPressed: () => _contactarNegocio(telefonoNegocio, whatsapp: false),
-                            ),
-                            ActionChip(
-                              avatar: Icon(Icons.chat, size: 18, color: Colors.green.shade700),
-                              label: const Text('WhatsApp'),
-                              onPressed: () => _contactarNegocio(
-                                telefonoNegocio,
-                                whatsapp: true,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ],
-                  ),
+              if (!widget.modoTrabajador)
+                _encabezadoPublico(
+                  isAbierto: isAbierto,
+                  estadoCierre: estadoCierre,
+                  ubicacion: ubicacion,
+                  ubicacionGeo: ubicacionGeo,
+                  descripcion: descripcionNegocio,
+                  telefono: telefonoNegocio,
+                  tiempoCorto: ultimoTiempoEstimadoHoy(dataNegocio),
                 ),
 
               Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    widget.modoTrabajador
-                        ? 'Productos'
-                        : CategoriasNegocio.etiquetaCatalogoPublico(
-                            dataNegocio['categoria']?.toString(),
-                          ),
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                padding: EdgeInsets.fromLTRB(12, widget.modoTrabajador ? 10 : 6, 12, 8),
                 child: TextField(
                   controller: _busquedaCtrl,
                   autofocus: widget.modoTrabajador,
