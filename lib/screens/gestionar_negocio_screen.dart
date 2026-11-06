@@ -508,7 +508,7 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
         .map((e) => e.toString())
         .where(opciones.contains)
         .toSet();
-    if (seleccion.isEmpty) seleccion.add('efectivo');
+    seleccion.add('efectivo');
 
     final ok = await showDialog<bool>(
       context: context,
@@ -520,7 +520,7 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'El cliente verá estas opciones al reservar o pedir.',
+                'El cliente verá estas opciones al reservar o pedir. El efectivo siempre queda disponible.',
                 style: TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 8),
@@ -530,9 +530,13 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
                   value: seleccion.contains(m),
                   title: Text(etiquetas[m] ?? m),
                   onChanged: (v) => setDialog(() {
+                    if (m == 'efectivo') {
+                      seleccion.add('efectivo');
+                      return;
+                    }
                     if (v == true) {
                       seleccion.add(m);
-                    } else if (seleccion.length > 1) {
+                    } else {
                       seleccion.remove(m);
                     }
                   }),
@@ -572,7 +576,7 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
     if (CategoriasNegocio.esBodega(cat)) {
       add(Icons.receipt_long, 'Salidas', _irPedidos, aviso: aviso.pendientesAhora, urgente: true);
       add(Icons.analytics_outlined, 'Historial', _irHistorial);
-      if (_opciones.repisas) add(Icons.shelves, 'Repisas', _irUbicaciones);
+      add(Icons.shelves, 'Repisas', _irUbicaciones);
       if (_opciones.stock) add(Icons.inventory_2, 'Entrada de mercancía', _irMercancia);
     } else if (CategoriasNegocio.esServicios(cat)) {
       add(Icons.add_circle_outline, 'Agregar cita', _abrirAgregarCita);
@@ -599,13 +603,13 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
       );
       add(Icons.analytics_outlined, 'Historial', _irHistorial);
       if (CategoriasNegocio.puedeEnvios(cat)) {
-        add(Icons.local_shipping_outlined, 'Envíos y cobros', _irEnvios);
+        add(Icons.local_shipping_outlined, 'Envíos', _irEnvios);
       }
       add(Icons.campaign_outlined, 'Nueva promoción', _irPromo);
       if (CategoriasNegocio.usaIngredientes(cat)) {
         add(Icons.restaurant_menu, 'Ingredientes', _irIngredientes);
       }
-      if (_opciones.repisas) {
+      if (OpcionesNegocio.tipoPuedeStock(cat)) {
         add(Icons.shelves, 'Repisas', _irUbicaciones);
       }
       if (_opciones.stock) {
@@ -614,7 +618,7 @@ class _GestionarNegocioScreenState extends State<GestionarNegocioScreen> {
       add(Icons.schedule, 'Horario', _abrirHorarioGuardado);
       add(Icons.visibility_outlined, 'Ver como cliente', _irMenuPublico);
     }
-    if (_opciones.clientesDescuento && !CategoriasNegocio.esBodega(cat)) {
+    if (!CategoriasNegocio.esBodega(cat)) {
       add(Icons.loyalty_outlined, 'Clientes con descuento', _irClientesDescuento);
     }
     add(Icons.groups_outlined, 'Equipo', _irEquipo);

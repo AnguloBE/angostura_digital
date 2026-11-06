@@ -14,6 +14,7 @@ import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/utils/opciones_negocio.dart';
+import 'package:angostura_digital/utils/telefono_local_utils.dart';
 import 'package:angostura_digital/utils/precio_producto_utils.dart';
 import 'package:angostura_digital/widgets/precio_visible.dart';
 import 'package:angostura_digital/services/negocio_clientes_descuento_service.dart';
@@ -163,7 +164,9 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
     required bool whatsapp,
     String? mensaje,
   }) async {
-    final digits = telefono.replaceAll(RegExp(r'[^0-9]'), '');
+    final digits = whatsapp
+        ? TelefonoLocalUtils.paraWhatsapp(telefono)
+        : telefono.replaceAll(RegExp(r'[^0-9]'), '');
     final uri = whatsapp
         ? Uri.parse(
             'https://wa.me/$digits${mensaje == null || mensaje.trim().isEmpty ? '' : '?text=${Uri.encodeComponent(mensaje.trim())}'}',
@@ -339,9 +342,6 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
           final usarPrecioDescuento = opcionesNegocio.clientesDescuento &&
               !_esBodega &&
               (widget.modoTrabajador ? _cobrarDescuentoMostrador : _soyClienteDescuento);
-          final mensajeWhatsapp = CategoriasNegocio.esImprenta(dataNegocio['categoria']?.toString())
-              ? 'Hola, quiero cotizar un trabajo (lona, sticker, uniforme, gorra o bordado).'
-              : 'Hola, quiero hacer un encargo.';
 
           String mensajeTiempo = ''; Color colorTiempo = Colors.grey;
           if (!isAbierto) { mensajeTiempo = '🔴 $estadoCierre'; colorTiempo = Colors.red; } 
@@ -463,50 +463,6 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                   ),
                 ),
 
-              if (!widget.modoTrabajador && opcionesNegocio.whatsappEncargos)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                  color: Colors.green.shade50,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        CategoriasNegocio.esImprenta(dataNegocio['categoria']?.toString())
-                            ? '¿Lona, sticker, uniforme o un diseño nuevo?'
-                            : '¿Un encargo a tu medida?',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green.shade900,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        telefonoNegocio.isEmpty
-                            ? 'Este local todavía no publicó su WhatsApp.'
-                            : 'Escríbele por WhatsApp y te cotizan el trabajo.',
-                        style: TextStyle(fontSize: 13, color: Colors.green.shade900),
-                      ),
-                      if (telefonoNegocio.isNotEmpty) ...[
-                        const SizedBox(height: 8),
-                        FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Colors.green.shade700,
-                            foregroundColor: Colors.white,
-                          ),
-                          onPressed: () => _contactarNegocio(
-                            telefonoNegocio,
-                            whatsapp: true,
-                            mensaje: mensajeWhatsapp,
-                          ),
-                          icon: const Icon(Icons.chat),
-                          label: const Text('Escribir por WhatsApp'),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-
               if (!widget.modoTrabajador &&
                   (descripcionNegocio.isNotEmpty || telefonoNegocio.isNotEmpty))
                 Container(
@@ -541,7 +497,6 @@ class _MenuNegocioScreenState extends State<MenuNegocioScreen> {
                               onPressed: () => _contactarNegocio(
                                 telefonoNegocio,
                                 whatsapp: true,
-                                mensaje: opcionesNegocio.whatsappEncargos ? mensajeWhatsapp : null,
                               ),
                             ),
                           ],

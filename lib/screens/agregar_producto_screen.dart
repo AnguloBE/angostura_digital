@@ -649,7 +649,7 @@ class _AgregarProductoScreenState extends State<AgregarProductoScreen> {
       ),
       const Text(
         'Indica en qué repisa está y cuántas piezas hay. '
-        'Si este local no usa repisas, el administrador puede apagarlas.',
+        'Si este local no usa repisas, apágalas en Gestionar negocio.',
         style: TextStyle(fontSize: 13, color: Colors.grey),
       ),
       const SizedBox(height: 10),

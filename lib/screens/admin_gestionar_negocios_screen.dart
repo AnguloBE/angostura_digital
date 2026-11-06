@@ -142,8 +142,6 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
     final categoria = data['categoria']?.toString();
     var opciones = OpcionesNegocio.desde(categoria, data);
     final puedeStock = OpcionesNegocio.tipoPuedeStock(categoria);
-    final puedeWhatsapp = CategoriasNegocio.visibleAlPublico(categoria);
-    final puedeDescuento = CategoriasNegocio.visibleAlPublico(categoria);
 
     final ok = await showDialog<bool>(
       context: context,
@@ -170,40 +168,18 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
                       opciones = opciones.copiar(stock: v, repisas: v ? opciones.repisas : false);
                     }),
                   ),
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Repisas / ubicaciones'),
-                    subtitle: const Text('Dónde está cada producto. Si no lo usan, apágalo.'),
-                    value: opciones.repisas,
-                    onChanged: opciones.stock
-                        ? (v) => setDialog(() => opciones = opciones.copiar(repisas: v))
-                        : null,
-                  ),
                 ],
-                if (puedeWhatsapp)
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Encargos por WhatsApp'),
-                    subtitle: const Text(
-                      'El cliente ve un botón para escribir. En imprenta sirve para diseños nuevos.',
-                    ),
-                    value: opciones.whatsappEncargos,
-                    onChanged: (v) => setDialog(() => opciones = opciones.copiar(whatsappEncargos: v)),
+                const Padding(
+                  padding: EdgeInsets.only(top: 12),
+                  child: Text(
+                    'Repisas, envíos y clientes con descuento los prende el dueño o el encargado, en su panel.',
+                    style: TextStyle(fontSize: 12, color: Colors.black54, height: 1.3),
                   ),
-                if (puedeDescuento)
-                  SwitchListTile(
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('Clientes con descuento'),
-                    subtitle: const Text(
-                      'Precio especial para técnicos, mayoristas u otros. El negocio carga costo, precio de venta y precio con descuento, y elige quién lo ve.',
-                    ),
-                    value: opciones.clientesDescuento,
-                    onChanged: (v) => setDialog(() => opciones = opciones.copiar(clientesDescuento: v)),
-                  ),
-                if (!puedeStock && !puedeWhatsapp && !puedeDescuento)
+                ),
+                if (!puedeStock)
                   const Padding(
-                    padding: EdgeInsets.only(top: 12),
-                    child: Text('Este tipo no tiene opciones extra.'),
+                    padding: EdgeInsets.only(top: 8),
+                    child: Text('Este tipo no tiene otras opciones de plataforma.'),
                   ),
               ],
             ),

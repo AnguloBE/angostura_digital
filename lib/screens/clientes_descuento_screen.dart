@@ -5,6 +5,7 @@ import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/services/negocio_clientes_descuento_service.dart';
 import 'package:angostura_digital/services/negocio_equipo_service.dart';
 import 'package:angostura_digital/utils/negocio_equipo_utils.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
 import 'package:angostura_digital/widgets/buscador_usuario_dialog.dart';
 
 /// Quién paga el precio con descuento en este negocio.
@@ -131,6 +132,40 @@ class _ClientesDescuentoScreenState extends State<ClientesDescuentoScreen> {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_puedeGestionar)
+            StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).snapshots(),
+              builder: (context, snap) {
+                final data = snap.data?.data();
+                final activo = OpcionesNegocio.desde(data?['categoria']?.toString(), data).clientesDescuento;
+                return SwitchListTile(
+                  title: const Text(
+                    'Precio con descuento',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: const Text(
+                    'Apagado, todos pagan el precio de venta. La lista de abajo se conserva.',
+                  ),
+                  value: activo,
+                  activeThumbColor: Colors.teal,
+                  onChanged: !snap.hasData
+                      ? null
+                      : (v) async {
+                          try {
+                            await OpcionesNegocio.guardarCampo(
+                              widget.negocioId,
+                              clientesDescuento: v,
+                            );
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('No se pudo guardar: $e'), backgroundColor: Colors.red),
+                            );
+                          }
+                        },
+                );
+              },
+            ),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(14),

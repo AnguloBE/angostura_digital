@@ -10,6 +10,7 @@ import 'package:angostura_digital/utils/entrega_ubicacion_tracker.dart';
 import 'package:angostura_digital/utils/envio_distancia_utils.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
 import 'package:angostura_digital/utils/encargo_utils.dart';
 import 'package:angostura_digital/utils/servicio_cita_utils.dart';
 import 'package:angostura_digital/services/notificaciones_pedido_service.dart';
@@ -58,6 +59,7 @@ class _CarritoScreenState extends State<CarritoScreen> {
   double _costoPorKm = 0;
   double _envioMinimo = 0;
   bool _envioDomicilioConfigurado = false;
+  bool _ofreceEnvios = true;
   double? _distanciaMaximaKm;
   double? _distanciaKm;
   double? _distanciaKmCobro;
@@ -157,10 +159,18 @@ class _CarritoScreenState extends State<CarritoScreen> {
                 .toList() ??
             const <String>[];
         _metodosPagoNegocio = metodos.isEmpty ? const ['efectivo'] : metodos;
+        if (!_metodosPagoNegocio.contains('efectivo')) {
+          _metodosPagoNegocio = ['efectivo', ..._metodosPagoNegocio];
+        }
         if (_metodosPagoNegocio.length == 1) {
           _metodoPagoSeleccionado = _metodosPagoNegocio.first;
         }
         _categoriaNegocio = CategoriasNegocio.normalizar(data['categoria']);
+        _ofreceEnvios = OpcionesNegocio.desde(_categoriaNegocio, data).enviosCobros;
+        if (!_ofreceEnvios) {
+          _envioDomicilioConfigurado = false;
+          _permiteRecoger = true;
+        }
 
         if (_esMostrador) {
           _metodoSeleccionado = 'mostrador';
@@ -171,6 +181,9 @@ class _CarritoScreenState extends State<CarritoScreen> {
         } else if (cart.esCarritoServicios && cart.tieneServicioCita) {
           _metodoSeleccionado = 'cita';
           _ubicacionListaConfirmada = true;
+        } else if (!_ofreceEnvios) {
+          _metodoSeleccionado = 'recoger';
+          cart.establecerLogistica('recoger', 0);
         }
       }
 
@@ -1333,7 +1346,22 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                 ],
                               ),
                             ),
-                          if (!_esMostrador && !esServicios) ...[
+                          if (!_esMostrador && !esServicios && !_ofreceEnvios)
+                            Container(
+                              width: double.infinity,
+                              margin: const EdgeInsets.only(bottom: 12),
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: Colors.blueGrey.shade50,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.blueGrey.shade100),
+                              ),
+                              child: const Text(
+                                'Este local no hace envíos a domicilio. Tu pedido es solo para recoger en el negocio.',
+                                style: TextStyle(fontWeight: FontWeight.w600, height: 1.3),
+                              ),
+                            ),
+                          if (!_esMostrador && !esServicios && _ofreceEnvios) ...[
                             const Text(
                               '¿Cómo quieres tu pedido?',
                               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
@@ -1364,8 +1392,8 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                 ],
                               ],
                             ),
-                            _seccionEncargo(),
                           ],
+                          if (!_esMostrador && !esServicios) _seccionEncargo(),
                           if (!_esMostrador && necesitaUbicacion) ...[
                             const Text(
                               '¿Dónde necesitas el servicio?',
@@ -1378,7 +1406,10 @@ class _CarritoScreenState extends State<CarritoScreen> {
                             ),
                             const SizedBox(height: 8),
                           ],
-                          if (!_esMostrador && _metodoSeleccionado == 'recoger' && !esServicios)
+                          if (!_esMostrador &&
+                              _metodoSeleccionado == 'recoger' &&
+                              !esServicios &&
+                              _ofreceEnvios)
                             Padding(
                               padding: const EdgeInsets.only(top: 12),
                               child: Container(
@@ -1393,7 +1424,8 @@ class _CarritoScreenState extends State<CarritoScreen> {
                                 ),
                               ),
                             )
-                          else if (!_esMostrador && (!esServicios || necesitaUbicacion)) ...[
+                          else if (!_esMostrador &&
+                              (necesitaUbicacion || (_ofreceEnvios && !esServicios))) ...[
                             if (!necesitaUbicacion && !_domicilioDisponible)
                               Padding(
                                 padding: const EdgeInsets.only(top: 12),

@@ -16,6 +16,7 @@ import 'package:angostura_digital/utils/encargo_utils.dart';
 import 'package:angostura_digital/utils/opciones_negocio.dart';
 import 'package:angostura_digital/utils/pedido_servicios_utils.dart';
 import 'package:angostura_digital/utils/pedido_mostrador_utils.dart';
+import 'package:angostura_digital/utils/telefono_local_utils.dart';
 import 'package:angostura_digital/widgets/editar_pedido_mostrador_dialog.dart';
 import 'package:angostura_digital/widgets/aviso_pedidos_negocio.dart';
 
@@ -81,7 +82,7 @@ class PedidosNegocioScreen extends StatelessWidget {
   }
 
   Future<void> _abrirWhatsApp(BuildContext context, String telefono) async {
-    final numStr = telefono.replaceAll(RegExp(r'[^0-9]'), '');
+    final numStr = TelefonoLocalUtils.paraWhatsapp(telefono);
     final Uri url = Uri.parse('https://wa.me/$numStr');
     try { await launchUrl(url, mode: LaunchMode.externalApplication); } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo abrir WhatsApp.'))); }
   }

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/services/negocio_ubicacion_service.dart';
 import 'package:angostura_digital/screens/escaner_codigo_screen.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
 
 /// Pantalla donde el negocio administra sus ubicaciones (repisas/zonas).
 ///
@@ -158,6 +160,37 @@ class UbicacionesNegocioScreen extends StatelessWidget {
       ),
       body: Column(
         children: [
+          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance.collection('negocios').doc(negocioId).snapshots(),
+            builder: (context, snap) {
+              final data = snap.data?.data();
+              final activas = OpcionesNegocio.desde(data?['categoria']?.toString(), data).repisas;
+              return Material(
+                color: Colors.white,
+                child: SwitchListTile(
+                  title: const Text('Usar repisas', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: const Text(
+                    'Apagadas, en cada producto solo anotas cuántas piezas hay.',
+                  ),
+                  value: activas,
+                  activeThumbColor: Colors.indigo,
+                  onChanged: !snap.hasData
+                      ? null
+                      : (v) async {
+                          try {
+                            await OpcionesNegocio.guardarCampo(negocioId, repisas: v);
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('No se pudo guardar: $e'), backgroundColor: Colors.red),
+                            );
+                          }
+                        },
+                ),
+              );
+            },
+          ),
+          const Divider(height: 1),
           Container(
             width: double.infinity,
             color: Colors.blue.shade50,

@@ -2,12 +2,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
 
-/// Lo que el administrador puede prender o apagar en un negocio.
+/// Lo que un negocio puede prender o apagar.
+/// Repisas, envíos y clientes con descuento los cambia el dueño o el encargado.
 /// Si no hay valor guardado, se usa lo normal de ese tipo.
 class OpcionesNegocio {
   final bool stock;
   final bool repisas;
   final bool whatsappEncargos;
+
+  /// Pedidos a domicilio. Apagado, el cliente solo puede recoger y seguir pagando.
+  final bool enviosCobros;
 
   /// Precios distintos: costo, venta y precio para clientes con descuento.
   final bool clientesDescuento;
@@ -16,6 +20,7 @@ class OpcionesNegocio {
     required this.stock,
     required this.repisas,
     required this.whatsappEncargos,
+    required this.enviosCobros,
     required this.clientesDescuento,
   });
 
@@ -33,6 +38,7 @@ class OpcionesNegocio {
       stock: conStock,
       repisas: conStock,
       whatsappEncargos: CategoriasNegocio.esImprenta(categoria),
+      enviosCobros: CategoriasNegocio.puedeEnvios(categoria),
       clientesDescuento: false,
     );
   }
@@ -53,6 +59,9 @@ class OpcionesNegocio {
     final whatsapp = CategoriasNegocio.visibleAlPublico(categoria)
         ? leer('whatsapp_encargos', base.whatsappEncargos)
         : false;
+    final envios = CategoriasNegocio.puedeEnvios(categoria)
+        ? leer('envios_cobros', base.enviosCobros)
+        : false;
     final descuento = CategoriasNegocio.visibleAlPublico(categoria)
         ? leer('clientes_descuento', base.clientesDescuento)
         : false;
@@ -60,6 +69,7 @@ class OpcionesNegocio {
       stock: stock,
       repisas: repisas,
       whatsappEncargos: whatsapp,
+      enviosCobros: envios,
       clientesDescuento: descuento,
     );
   }
@@ -68,6 +78,7 @@ class OpcionesNegocio {
     bool? stock,
     bool? repisas,
     bool? whatsappEncargos,
+    bool? enviosCobros,
     bool? clientesDescuento,
   }) {
     final nuevoStock = stock ?? this.stock;
@@ -75,6 +86,7 @@ class OpcionesNegocio {
       stock: nuevoStock,
       repisas: nuevoStock ? (repisas ?? this.repisas) : false,
       whatsappEncargos: whatsappEncargos ?? this.whatsappEncargos,
+      enviosCobros: enviosCobros ?? this.enviosCobros,
       clientesDescuento: clientesDescuento ?? this.clientesDescuento,
     );
   }
@@ -83,8 +95,35 @@ class OpcionesNegocio {
         'stock': stock,
         'repisas': repisas && stock,
         'whatsapp_encargos': whatsappEncargos,
+        'envios_cobros': enviosCobros,
         'clientes_descuento': clientesDescuento,
       };
+
+  /// El dueño o encargado cambia una sola función sin perder las demás.
+  static Future<void> guardarCampo(
+    String negocioId, {
+    bool? enviosCobros,
+    bool? repisas,
+    bool? clientesDescuento,
+  }) async {
+    final ref = FirebaseFirestore.instance.collection('negocios').doc(negocioId);
+    final doc = await ref.get();
+    final data = doc.data();
+    final actual = desde(data?['categoria']?.toString(), data);
+    final siguiente = repisas == true
+        ? actual.copiar(
+            stock: true,
+            repisas: true,
+            enviosCobros: enviosCobros,
+            clientesDescuento: clientesDescuento,
+          )
+        : actual.copiar(
+            enviosCobros: enviosCobros,
+            repisas: repisas,
+            clientesDescuento: clientesDescuento,
+          );
+    await ref.update({'opciones': siguiente.aMapa()});
+  }
 }
 
 /// Lee las opciones del negocio y las pasa al resto de la pantalla.

@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/screens/mapa_ubicacion_screen.dart';
+import 'package:angostura_digital/utils/opciones_negocio.dart';
 
 class ConfigurarEnviosScreen extends StatefulWidget {
   final String negocioId;
@@ -14,6 +15,7 @@ class ConfigurarEnviosScreen extends StatefulWidget {
 
 class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
   bool _permiteRecoger = true;
+  bool _enviosActivos = true;
   bool _isLoading = true;
   GeoPoint? _ubicacionGeoNegocio;
 
@@ -49,6 +51,7 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
     if (doc.exists && doc.data() != null) {
       final data = doc.data()!;
       if (data.containsKey('permite_recoger')) _permiteRecoger = data['permite_recoger'];
+      _enviosActivos = OpcionesNegocio.desde(data['categoria']?.toString(), data).enviosCobros;
       _ubicacionGeoNegocio = data['ubicacion_geo'] as GeoPoint?;
       if (data['costo_por_km'] != null) _costoPorKmCtrl.text = data['costo_por_km'].toString();
       if (data['envio_minimo'] != null) _envioMinimoCtrl.text = data['envio_minimo'].toString();
@@ -64,6 +67,7 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
           ..clear()
           ..addAll(metodos);
       }
+      _metodosPago.add('efectivo');
     }
 
     setState(() => _isLoading = false);
@@ -129,9 +133,35 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
     }
   }
 
+  Future<void> _cambiarEnvios(bool activo) async {
+    final anterior = _enviosActivos;
+    final recogerAnterior = _permiteRecoger;
+    setState(() {
+      _enviosActivos = activo;
+      if (!activo) _permiteRecoger = true;
+    });
+    try {
+      await OpcionesNegocio.guardarCampo(widget.negocioId, enviosCobros: activo);
+      if (!activo) {
+        await FirebaseFirestore.instance.collection('negocios').doc(widget.negocioId).update({
+          'permite_recoger': true,
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _enviosActivos = anterior;
+        _permiteRecoger = recogerAnterior;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo guardar: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
   Future<void> _guardarConfiguracion() async {
     final costoKm = double.tryParse(_costoPorKmCtrl.text.trim()) ?? 0;
-    if (_ubicacionGeoNegocio == null) {
+    if (_enviosActivos && _ubicacionGeoNegocio == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Marca la ubicación GPS del local para activar envíos a domicilio.'),
@@ -141,15 +171,7 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
       return;
     }
 
-    if (_metodosPago.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Elige al menos un método de pago que aceptas.'),
-          backgroundColor: Colors.orange,
-        ),
-      );
-      return;
-    }
+    _metodosPago.add('efectivo');
 
     setState(() => _isLoading = true);
 
@@ -194,6 +216,20 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Envíos a domicilio',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  subtitle: const Text(
+                    'Apagado, el cliente no pide a domicilio. Sigue pudiendo recoger en el local y pagar, incluso en efectivo.',
+                  ),
+                  value: _enviosActivos,
+                  activeThumbColor: Colors.blueAccent,
+                  onChanged: _cambiarEnvios,
+                ),
+                const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
@@ -346,7 +382,7 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
                       ),
                       const SizedBox(height: 6),
                       const Text(
-                        'El cliente solo podrá elegir entre los que marques. En efectivo se le pedirá con cuánto pagará para llevar su cambio.',
+                        'El efectivo siempre está disponible. Tarjeta y transferencia son extra. En efectivo se le pide con cuánto pagará para llevar su cambio.',
                         style: TextStyle(color: Colors.black87, fontSize: 13),
                       ),
                       const SizedBox(height: 12),
@@ -371,6 +407,10 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
                             backgroundColor: Colors.white,
                             checkmarkColor: Colors.white,
                             onSelected: (sel) => setState(() {
+                              if (m == 'efectivo') {
+                                _metodosPago.add('efectivo');
+                                return;
+                              }
                               if (sel) {
                                 _metodosPago.add(m);
                               } else {
@@ -385,11 +425,15 @@ class _ConfigurarEnviosScreenState extends State<ConfigurarEnviosScreen> {
                 ),
                 const SizedBox(height: 20),
                 SwitchListTile(
-                  title: const Text('Permitir "Recoger en el Local"', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: const Text('El cliente podrá ir a buscar su comida sin pagar envío.'),
+                  title: const Text('Permitir recoger en el local', style: TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text(
+                    _enviosActivos
+                        ? 'El cliente podrá ir a buscar su pedido sin pagar envío.'
+                        : 'Con los envíos apagados, el cliente solo puede recoger en el local.',
+                  ),
                   value: _permiteRecoger,
                   activeThumbColor: Colors.blueAccent,
-                  onChanged: (val) => setState(() => _permiteRecoger = val),
+                  onChanged: _enviosActivos ? (val) => setState(() => _permiteRecoger = val) : null,
                 ),
                 const SizedBox(height: 20),
                 ElevatedButton.icon(
