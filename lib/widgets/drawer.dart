@@ -24,6 +24,7 @@ import 'package:angostura_digital/widgets/editar_nombre_dialog.dart';
 import 'package:angostura_digital/screens/admin_anuncios_screen.dart';
 import 'package:angostura_digital/screens/admin_solicitudes_negocio_screen.dart';
 import 'package:angostura_digital/screens/solicitud_negocio_screen.dart';
+import 'package:angostura_digital/utils/admin_sistema.dart';
 
 class DrawerPrincipal extends StatefulWidget {
   const DrawerPrincipal({super.key});
@@ -68,26 +69,7 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
     );
   }
 
-  Widget _tileQuieroNegocio({bool esAdmin = false}) {
-    if (esAdmin) {
-      return ListTile(
-        leading: const Icon(Icons.add_business, color: Colors.teal),
-        title: const Text(
-          'Poner un negocio',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: const Text('Darlo de alta ahora, sin esperar una solicitud.'),
-        onTap: () {
-          Navigator.pop(context);
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const AdminGestionarNegociosScreen(abrirFormulario: true),
-            ),
-          );
-        },
-      );
-    }
+  Widget _tileQuieroNegocio() {
     return ListTile(
       leading: const Icon(Icons.add_business, color: Colors.teal),
       title: const Text(
@@ -273,7 +255,7 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
         ),
         ListTile(
           leading: const Icon(Icons.store, color: Colors.teal),
-          title: const Text('Gestionar negocios'),
+          title: const Text('Administrar negocios'),
           subtitle: const Text('Crear, pausar, comisión y eliminar', style: TextStyle(fontSize: 12)),
           onTap: () {
             Navigator.pop(context);
@@ -356,7 +338,10 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
         final data = usuarioSnap.data?.exists == true
             ? usuarioSnap.data!.data() as Map<String, dynamic>?
             : null;
-        final rol = data?['rol'] ?? 'cliente';
+        final esAdmin = AdminSistema.es(data, telefonoAuth: user.phoneNumber);
+        if (esAdmin) {
+          AdminSistema.asegurarRol(user.uid, data, telefonoAuth: user.phoneNumber);
+        }
 
         return Drawer(
           child: Column(
@@ -367,7 +352,7 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
                 child: ListView(
                   padding: EdgeInsets.zero,
                   children: [
-                    if (rol == 'admin') _buildAdminSection(context),
+                    if (esAdmin) _buildAdminSection(context),
                     StreamBuilder<List<NegocioAcceso>>(
                       stream: NegocioEquipoService.streamMisAccesos(user.uid),
                       builder: (context, accesosSnap) {
@@ -506,7 +491,7 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
               ),
 
               const Divider(height: 1),
-              _tileQuieroNegocio(esAdmin: rol == 'admin'),
+              _tileQuieroNegocio(),
               ListTile(
                 leading: _isCerrandoSesion
                     ? const SizedBox(
