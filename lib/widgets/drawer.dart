@@ -68,7 +68,26 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
     );
   }
 
-  Widget _tileQuieroNegocio() {
+  Widget _tileQuieroNegocio({bool esAdmin = false}) {
+    if (esAdmin) {
+      return ListTile(
+        leading: const Icon(Icons.add_business, color: Colors.teal),
+        title: const Text(
+          'Poner un negocio',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: const Text('Darlo de alta ahora, sin esperar una solicitud.'),
+        onTap: () {
+          Navigator.pop(context);
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const AdminGestionarNegociosScreen(abrirFormulario: true),
+            ),
+          );
+        },
+      );
+    }
     return ListTile(
       leading: const Icon(Icons.add_business, color: Colors.teal),
       title: const Text(
@@ -281,8 +300,8 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
         ),
         ListTile(
           leading: const Icon(Icons.storefront, color: Colors.orange),
-          title: const Text('Solicitudes de negocios'),
-          subtitle: const Text('Quien quiere aparecer en la app', style: TextStyle(fontSize: 12)),
+          title: const Text('Aceptar negocios'),
+          subtitle: const Text('Solicitudes pendientes. También puedes dar de alta uno.', style: TextStyle(fontSize: 12)),
           trailing: const _BadgeSolicitudes(),
           onTap: () {
             Navigator.pop(context);
@@ -348,6 +367,7 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
                 child: ListView(
                   padding: EdgeInsets.zero,
                   children: [
+                    if (rol == 'admin') _buildAdminSection(context),
                     StreamBuilder<List<NegocioAcceso>>(
                       stream: NegocioEquipoService.streamMisAccesos(user.uid),
                       builder: (context, accesosSnap) {
@@ -481,13 +501,12 @@ class _DrawerPrincipalState extends State<DrawerPrincipal> {
                         );
                       },
                     ),
-                    if (rol == 'admin') _buildAdminSection(context),
                   ],
                 ),
               ),
 
               const Divider(height: 1),
-              _tileQuieroNegocio(),
+              _tileQuieroNegocio(esAdmin: rol == 'admin'),
               ListTile(
                 leading: _isCerrandoSesion
                     ? const SizedBox(

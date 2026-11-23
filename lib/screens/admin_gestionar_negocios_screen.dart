@@ -9,7 +9,10 @@ import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/utils/opciones_negocio.dart';
 
 class AdminGestionarNegociosScreen extends StatefulWidget {
-  const AdminGestionarNegociosScreen({super.key});
+  /// Abre el formulario de alta al entrar. Lo usa el menú «Poner un negocio».
+  final bool abrirFormulario;
+
+  const AdminGestionarNegociosScreen({super.key, this.abrirFormulario = false});
 
   @override
   State<AdminGestionarNegociosScreen> createState() => _AdminGestionarNegociosScreenState();
@@ -18,6 +21,16 @@ class AdminGestionarNegociosScreen extends StatefulWidget {
 class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScreen> {
   String _filtro = 'todos';
   final TextEditingController _busquedaCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.abrirFormulario) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _mostrarFormularioNegocio();
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -30,6 +43,7 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
     final nombreCtrl = TextEditingController(text: data?['nombre'] ?? '');
     final descCtrl = TextEditingController(text: data?['descripcion'] ?? '');
     var categoria = CategoriasNegocio.normalizar(data?['categoria']);
+    var aceptarYa = false;
 
     final categorias = CategoriasNegocio.lista;
 
@@ -67,14 +81,29 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
                   maxLines: 2,
                   decoration: const InputDecoration(labelText: 'Descripción', border: OutlineInputBorder()),
                 ),
-                if (!esEdicion)
+                if (!esEdicion) ...[
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: aceptarYa,
+                    onChanged: CategoriasNegocio.esBodega(categoria)
+                        ? null
+                        : (v) => setDialog(() => aceptarYa = v ?? false),
+                    title: const Text('Aceptarlo y mostrarlo en Explorar'),
+                    subtitle: Text(
+                      CategoriasNegocio.esBodega(categoria)
+                          ? 'La bodega no sale en Explorar. Queda lista para el equipo.'
+                          : 'Si no lo marcas, queda en pausa hasta que el dueño lo publique.',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
                   const Padding(
-                    padding: EdgeInsets.only(top: 12),
+                    padding: EdgeInsets.only(top: 4),
                     child: Text(
-                      'Queda en pausa: los clientes no lo ven hasta que el dueño lo publique. Después usa «Equipo» para agregar dueños y trabajadores.',
+                      'Después usa «Equipo» para agregar dueños y trabajadores.',
                       style: TextStyle(fontSize: 12, color: Colors.black54),
                     ),
                   ),
+                ],
               ],
             ),
           ),
@@ -105,9 +134,10 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
         await FirebaseFirestore.instance.collection('negocios').doc(docId).update(payload);
       } else {
         final esBodega = CategoriasNegocio.esBodega(categoria);
+        final visible = esBodega || aceptarYa;
         await FirebaseFirestore.instance.collection('negocios').add({
           ...payload,
-          'estado': esBodega ? ComisionAppUtils.estadoActivo : ComisionAppUtils.estadoPausado,
+          'estado': visible ? ComisionAppUtils.estadoActivo : ComisionAppUtils.estadoPausado,
           'fecha_creacion': FieldValue.serverTimestamp(),
           if (!CategoriasNegocio.esBodega(categoria)) ...const ComisionAppConfig().aFirestore(),
           if (!CategoriasNegocio.esBodega(categoria)) 'comision_acumulada': 0,
@@ -123,7 +153,9 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
                   ? 'Negocio actualizado'
                   : (CategoriasNegocio.esBodega(categoria)
                       ? 'Bodega creada'
-                      : 'Negocio creado. Queda en pausa hasta que el dueño lo publique.'),
+                      : (aceptarYa
+                          ? 'Negocio aceptado. Ya se ve en Explorar.'
+                          : 'Negocio creado. Queda en pausa hasta que el dueño lo publique.')),
             ),
             backgroundColor: Colors.green,
           ),
@@ -473,6 +505,17 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
               ),
             ),
           ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () => _mostrarFormularioNegocio(),
+                icon: const Icon(Icons.add_business),
+                label: const Text('Poner un negocio'),
+              ),
+            ),
+          ),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -612,7 +655,7 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
                 if (ComisionAppUtils.esActivo(estado))
                   _btn('Pausar', Colors.deepPurple, () => _cambiarEstado(doc.id, ComisionAppUtils.estadoPausado)),
                 if (ComisionAppUtils.esPausado(estado))
-                  _btn('Activar', Colors.green, () => _cambiarEstado(doc.id, ComisionAppUtils.estadoActivo)),
+                  _btn('Aceptar', Colors.green, () => _cambiarEstado(doc.id, ComisionAppUtils.estadoActivo)),
                 _btn('Comisión', Colors.indigo, () => _configurarComision(doc.id, data)),
                 _btn('Equipo', Colors.deepOrange, () {
                   Navigator.push(

@@ -6,6 +6,7 @@ import 'package:angostura_digital/utils/categorias_negocio.dart';
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/utils/negocio_equipo_utils.dart';
 import 'package:angostura_digital/services/negocio_equipo_service.dart';
+import 'package:angostura_digital/screens/admin_gestionar_negocios_screen.dart';
 
 class AdminSolicitudesNegocioScreen extends StatefulWidget {
   const AdminSolicitudesNegocioScreen({super.key});
@@ -45,6 +46,7 @@ class _AdminSolicitudesNegocioScreenState extends State<AdminSolicitudesNegocioS
     final clienteId = (data['cliente_id'] ?? '').toString();
     var categoria = CategoriasNegocio.lista.first;
     var comoDueno = clienteId.isNotEmpty;
+    var aceptarYa = false;
 
     final decision = await showDialog<bool>(
       context: context,
@@ -73,9 +75,19 @@ class _AdminSolicitudesNegocioScreenState extends State<AdminSolicitudesNegocioS
                   onChanged: (v) => setDialog(() => categoria = v ?? categoria),
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'El negocio queda en pausa. El dueño lo publica cuando ya tenga productos y quiera que todos lo vean.',
-                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: aceptarYa,
+                  onChanged: CategoriasNegocio.esBodega(categoria)
+                      ? null
+                      : (v) => setDialog(() => aceptarYa = v ?? false),
+                  title: const Text('Aceptarlo y mostrarlo en Explorar'),
+                  subtitle: Text(
+                    CategoriasNegocio.esBodega(categoria)
+                        ? 'La bodega no sale en Explorar.'
+                        : 'Si no lo marcas, queda en pausa hasta que el dueño lo publique.',
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ),
                 CheckboxListTile(
                   contentPadding: EdgeInsets.zero,
@@ -94,7 +106,7 @@ class _AdminSolicitudesNegocioScreenState extends State<AdminSolicitudesNegocioS
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
-            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Crear')),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Aceptar')),
           ],
         ),
       ),
@@ -103,19 +115,18 @@ class _AdminSolicitudesNegocioScreenState extends State<AdminSolicitudesNegocioS
     if (decision != true || !mounted) return;
     setState(() => _ocupado = true);
     try {
+      final esBodega = CategoriasNegocio.esBodega(categoria);
+      final visible = esBodega || aceptarYa;
       final ref = await FirebaseFirestore.instance.collection('negocios').add({
         'nombre': nombre,
         'descripcion': descripcion,
         'categoria': categoria,
-        'estado': CategoriasNegocio.esBodega(categoria)
-            ? ComisionAppUtils.estadoActivo
-            : ComisionAppUtils.estadoPausado,
+        'estado': visible ? ComisionAppUtils.estadoActivo : ComisionAppUtils.estadoPausado,
         'fecha_creacion': FieldValue.serverTimestamp(),
         if (telefono.isNotEmpty) 'telefono': telefono,
-        if (!CategoriasNegocio.esBodega(categoria)) ...const ComisionAppConfig().aFirestore(),
-        if (!CategoriasNegocio.esBodega(categoria)) 'comision_acumulada': 0,
-        if (!CategoriasNegocio.esBodega(categoria))
-          'comision_periodo_inicio': FieldValue.serverTimestamp(),
+        if (!esBodega) ...const ComisionAppConfig().aFirestore(),
+        if (!esBodega) 'comision_acumulada': 0,
+        if (!esBodega) 'comision_periodo_inicio': FieldValue.serverTimestamp(),
       });
 
       var avisoEquipo = '';
@@ -142,9 +153,11 @@ class _AdminSolicitudesNegocioScreenState extends State<AdminSolicitudesNegocioS
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              CategoriasNegocio.esBodega(categoria)
+              esBodega
                   ? 'Negocio creado.$avisoEquipo'
-                  : 'Negocio creado en pausa.$avisoEquipo El dueño lo publica cuando esté listo.',
+                  : (aceptarYa
+                      ? 'Negocio aceptado. Ya se ve en Explorar.$avisoEquipo'
+                      : 'Negocio aceptado en pausa.$avisoEquipo El dueño lo publica cuando esté listo.'),
             ),
             backgroundColor: Colors.green,
           ),
@@ -197,9 +210,23 @@ class _AdminSolicitudesNegocioScreenState extends State<AdminSolicitudesNegocioS
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Solicitudes de negocios'),
+        title: const Text('Aceptar negocios'),
         backgroundColor: globals.colorFondo,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            tooltip: 'Poner un negocio',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const AdminGestionarNegociosScreen(abrirFormulario: true),
+                ),
+              );
+            },
+            icon: const Icon(Icons.add_business),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -242,8 +269,32 @@ class _AdminSolicitudesNegocioScreenState extends State<AdminSolicitudesNegocioS
                   return true;
                 }).toList();
                 if (docs.isEmpty) {
-                  return const Center(
-                    child: Text('No hay solicitudes en esta lista.', style: TextStyle(color: Colors.grey)),
+                  return Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            'No hay solicitudes en esta lista.',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                          const SizedBox(height: 16),
+                          FilledButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => const AdminGestionarNegociosScreen(abrirFormulario: true),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.add_business),
+                            label: const Text('Poner un negocio'),
+                          ),
+                        ],
+                      ),
+                    ),
                   );
                 }
                 return ListView.separated(
@@ -320,7 +371,7 @@ class _AdminSolicitudesNegocioScreenState extends State<AdminSolicitudesNegocioS
                                         foregroundColor: Colors.white,
                                       ),
                                       onPressed: _ocupado ? null : () => _crear(doc),
-                                      child: const Text('Crear negocio'),
+                                      child: const Text('Aceptar'),
                                     ),
                                   ),
                                 ],
