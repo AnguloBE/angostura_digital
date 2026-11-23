@@ -1,5 +1,5 @@
 const {setGlobalOptions} = require("firebase-functions");
-const {onDocumentCreated, onDocumentUpdated, onDocumentWritten} = require("firebase-functions/v2/firestore");
+const {onDocumentCreated, onDocumentDeleted, onDocumentUpdated, onDocumentWritten} = require("firebase-functions/v2/firestore");
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {initializeApp} = require("firebase-admin/app");
 const {getFirestore} = require("firebase-admin/firestore");
@@ -402,6 +402,28 @@ exports.onNegocioActualizado = onDocumentUpdated(
         )));
       } catch (error) {
         console.error("Error sincronizando accesos del negocio:", error.message);
+      }
+    },
+);
+
+exports.onNegocioEliminado = onDocumentDeleted(
+    {
+      document: "negocios/{negocioId}",
+      region: "us-central1",
+    },
+    async (event) => {
+      const negocioId = event.params.negocioId;
+      const data = event.data?.data() || {};
+      try {
+        const equipo = await db.collection("negocios").doc(negocioId).collection("equipo").get();
+        const uids = new Set(equipo.docs.map((doc) => doc.id));
+        if (data.propietario_uid) uids.add(data.propietario_uid);
+        await Promise.all([...uids].map((uid) =>
+          db.collection("usuarios").doc(uid).collection("negocios_acceso").doc(negocioId).delete(),
+        ));
+        await Promise.all(equipo.docs.map((doc) => doc.ref.delete()));
+      } catch (error) {
+        console.error("Error limpiando accesos del negocio eliminado:", error.message);
       }
     },
 );

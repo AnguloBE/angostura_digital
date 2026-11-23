@@ -104,15 +104,33 @@ class NegocioEquipoService {
   }
 
   /// Lista negocios del usuario vía espejo en su perfil (sin collectionGroup).
+  /// Si el negocio ya se borró, el espejo se quita: si no, sigue saliendo en el menú.
   static Stream<List<NegocioAcceso>> streamMisAccesos(String uid) {
     sincronizarAccesosUsuario(uid);
-    return _accesoUsuarioRef(uid).snapshots().map((snap) {
-      final accesos = snap.docs
-          .map((doc) => NegocioAcceso.desdeMap(doc.id, doc.data()))
-          .toList();
+    return _accesoUsuarioRef(uid).snapshots().asyncMap((snap) async {
+      final accesos = <NegocioAcceso>[];
+      for (final doc in snap.docs) {
+        if (!await _negocioSigueExistiendo(doc.id)) {
+          try {
+            await doc.reference.delete();
+          } catch (_) {}
+          continue;
+        }
+        accesos.add(NegocioAcceso.desdeMap(doc.id, doc.data()));
+      }
       accesos.sort((a, b) => a.nombre.compareTo(b.nombre));
       return accesos;
     });
+  }
+
+  /// true si el documento existe. Si la lectura falla, se conserva el acceso.
+  static Future<bool> _negocioSigueExistiendo(String negocioId) async {
+    try {
+      final neg = await _db.collection('negocios').doc(negocioId).get();
+      return neg.exists;
+    } catch (_) {
+      return true;
+    }
   }
 
   static Stream<List<NegocioMiembro>> streamMisMembresias(String uid) {
@@ -145,8 +163,52 @@ class NegocioEquipoService {
       }
 
       await _sincronizarDesdeEquipoCollectionGroup(uid);
+      await _quitarAccesosDeNegociosBorrados(uid);
     } catch (_) {
       _legacySincronizado.remove(uid);
+    }
+  }
+
+  /// Borra espejos cuyo negocio ya no existe (quedaron al eliminar solo el documento).
+  static Future<void> _quitarAccesosDeNegociosBorrados(String uid) async {
+    final accesos = await _accesoUsuarioRef(uid).get();
+    for (final doc in accesos.docs) {
+      if (await _negocioSigueExistiendo(doc.id)) continue;
+      try {
+        await doc.reference.delete();
+      } catch (_) {}
+    }
+  }
+
+  /// Elimina el negocio y los accesos del menú de su equipo.
+  /// Borrar solo el documento deja el espejo en cada usuario.
+  static Future<void> eliminarNegocio(String negocioId) async {
+    final negRef = _db.collection('negocios').doc(negocioId);
+    final neg = await negRef.get();
+    final uids = <String>{};
+    final propietario = neg.data()?['propietario_uid']?.toString();
+    if (propietario != null && propietario.isNotEmpty) uids.add(propietario);
+
+    QuerySnapshot<Map<String, dynamic>>? equipo;
+    try {
+      equipo = await _equipoRef(negocioId).get();
+      for (final doc in equipo.docs) {
+        uids.add(doc.id);
+      }
+    } catch (_) {}
+
+    await negRef.delete();
+
+    for (final uid in uids) {
+      await _quitarAccesoUsuario(uid: uid, negocioId: negocioId);
+    }
+
+    if (equipo != null) {
+      for (final doc in equipo.docs) {
+        try {
+          await doc.reference.delete();
+        } catch (_) {}
+      }
     }
   }
 

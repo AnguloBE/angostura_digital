@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:angostura_digital/globals.dart' as globals;
 import 'package:angostura_digital/utils/comision_app_utils.dart';
 import 'package:angostura_digital/services/negocio_comision_service.dart';
+import 'package:angostura_digital/services/negocio_equipo_service.dart';
 import 'package:angostura_digital/screens/equipo_negocio_screen.dart';
 import 'package:angostura_digital/screens/gestionar_negocio_screen.dart';
 import 'package:angostura_digital/utils/categorias_negocio.dart';
@@ -450,8 +451,22 @@ class _AdminGestionarNegociosScreenState extends State<AdminGestionarNegociosScr
         ],
       ),
     );
-    if (ok == true) {
-      await FirebaseFirestore.instance.collection('negocios').doc(docId).delete();
+    if (ok != true || !mounted) return;
+
+    try {
+      await NegocioEquipoService.eliminarNegocio(docId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('"$nombre" se eliminó. Ya no debe salir en Mis negocios.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo eliminar "$nombre": $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
     }
   }
 
